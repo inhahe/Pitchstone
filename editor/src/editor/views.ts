@@ -44,6 +44,7 @@ export class ListItemView implements NodeView {
   }
 
   private sync() {
+    if (!this.box) return
     const checked = !!this.node.attrs.checked
     this.dom.dataset.checked = String(checked)
     this.box?.setAttribute('aria-checked', String(checked))

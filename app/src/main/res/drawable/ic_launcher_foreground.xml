@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An ink drop holding markdown's down-arrow mark. Drawn inside the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,25 C54,25 34,49 34,63 A20,20 0 0,0 74,63 C74,49 54,25 54,25 Z" />
+    <path
+        android:fillColor="#FF4F378B"
+        android:pathData="M50,50 L58,50 L58,61 L64,61 L54,73 L44,61 L50,61 Z" />
+</vector>

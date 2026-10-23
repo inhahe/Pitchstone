@@ -26,3 +26,11 @@ editor/playwright-report/
 
 # Editor scratch (debug harness output, fuzz logs)
 editor/scratch/
+
+# Release signing (kept outside version control; see README.md)
+/keystore.properties
+*.jks
+*.keystore
+
+# Gradle logs from local runs
+/scratch-*.log
