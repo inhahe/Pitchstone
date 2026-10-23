@@ -1,0 +1,28 @@
+# Gradle / Android build output
+.gradle/
+build/
+/local.properties
+*.apk
+*.aab
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.vs/
+
+# Editor (web) build output and dependencies
+editor/node_modules/
+editor/dist/
+editor/dist-test/
+editor/test-results/
+editor/playwright-report/
+
+# Scratch output from testing (screenshots, UI dumps)
+/scratch/
+
+# Editor scratch (debug harness output, fuzz logs)
+editor/scratch/
