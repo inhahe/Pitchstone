@@ -32,11 +32,9 @@ export function parseMarkdown(source: string): Node {
     top.push(schema.nodes.frontmatter.create(null, body ? schema.text(body) : null))
     src = src.slice(fm[0].length)
   }
-  const env: ParseEnv = {}
-  const tokens = md.parse(src, env)
-  const blocks = convertBlocks(tokens, env)
+  const tokens = md.parse(src, {})
+  const blocks = convertBlocks(tokens)
   const lines = src.split('\n')
-  const lineCount = src === '' ? 0 : src.endsWith('\n') ? lines.length - 1 : lines.length
   const isBlank = (line: number) => /^[ \t]*$/.test(lines[line] ?? '')
 
   let prevEnd = -1
@@ -48,10 +46,8 @@ export function parseMarkdown(source: string): Node {
     top.push(b.node)
     prevEnd = end
   }
-  if (blocks.length) {
-    const trailing = Math.max(0, lineCount - prevEnd)
-    for (let i = 0; i < trailing; i++) top.push(schema.nodes.paragraph.create())
-  }
+  // Blank lines at the end of a note are not kept: they are invisible, and an empty paragraph
+  // left after a table or code block (to type below it) should not grow the file.
   if (!top.some((n) => n.type !== schema.nodes.frontmatter)) top.push(schema.nodes.paragraph.create())
   return schema.nodes.doc.create(null, top)
 }
@@ -94,7 +90,7 @@ function cellAlign(token: Token): string | null {
 }
 
 /** Converts block tokens into top-level nodes, each with its source line range. */
-function convertBlocks(tokens: Token[], env: ParseEnv): TopBlock[] {
+function convertBlocks(tokens: Token[]): TopBlock[] {
   const nodes = schema.nodes
   const result: TopBlock[] = []
   const stack: Frame[] = []
@@ -218,7 +214,6 @@ function convertBlocks(tokens: Token[], env: ParseEnv): TopBlock[] {
     }
   }
   if (stack.length) throw new MarkdownParseError('Unclosed block')
-  void env
   return result
 }
 

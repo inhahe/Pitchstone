@@ -1,0 +1,503 @@
+/* The editor page. Colours come from the app's theme through CSS variables (settings.ts). */
+
+:root {
+  --bg: #ffffff;
+  --surface: #f6f6f8;
+  --surface-variant: #ececf1;
+  --fg: #1d1b20;
+  --fg-muted: #6b6870;
+  --accent: #6750a4;
+  --on-accent: #ffffff;
+  --outline: #cac4d0;
+  --highlight: #fff3a8;
+  --error: #b3261e;
+  --font-size: 17px;
+  --mono: ui-monospace, 'Roboto Mono', 'Droid Sans Mono', Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, Roboto, 'Segoe UI', sans-serif;
+  font-size: var(--font-size);
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  overflow-wrap: break-word;
+}
+
+#app {
+  padding: 12px 20px 0;
+  box-sizing: border-box;
+  margin: 0 auto;
+}
+.readable #app {
+  max-width: 46em;
+}
+
+/* Tapping the empty area below the text puts the cursor at the end. */
+#below {
+  min-height: 45vh;
+}
+
+#title {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  padding: 0 0 8px;
+  margin: 0 0 4px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 1.65em;
+  font-weight: 700;
+  line-height: 1.25;
+}
+#title::placeholder {
+  color: var(--fg-muted);
+  opacity: 0.6;
+}
+
+#source {
+  display: block;
+  width: 100%;
+  min-height: 50vh;
+  box-sizing: border-box;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 0.88em;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  tab-size: 4;
+}
+[hidden] {
+  display: none !important;
+}
+
+.ProseMirror {
+  outline: none;
+  min-height: 2em;
+  caret-color: var(--accent);
+}
+body[data-mode='read'] .ProseMirror {
+  caret-color: transparent;
+}
+.ProseMirror > * + * {
+  margin-top: 0.75em;
+}
+.ProseMirror p {
+  margin: 0;
+}
+.ProseMirror p + p {
+  margin-top: 0.75em;
+}
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3,
+.ProseMirror h4,
+.ProseMirror h5,
+.ProseMirror h6 {
+  line-height: 1.3;
+  margin: 1.1em 0 0.35em;
+  font-weight: 700;
+}
+.ProseMirror > h1:first-child,
+.ProseMirror > h2:first-child,
+.ProseMirror > h3:first-child {
+  margin-top: 0.25em;
+}
+.ProseMirror h1 {
+  font-size: 1.6em;
+}
+.ProseMirror h2 {
+  font-size: 1.38em;
+}
+.ProseMirror h3 {
+  font-size: 1.2em;
+}
+.ProseMirror h4 {
+  font-size: 1.08em;
+}
+.ProseMirror h5 {
+  font-size: 1em;
+}
+.ProseMirror h6 {
+  font-size: 0.92em;
+  color: var(--fg-muted);
+}
+
+.ProseMirror a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ProseMirror strong {
+  font-weight: 700;
+}
+.ProseMirror mark {
+  background: var(--highlight);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.dark .ProseMirror mark {
+  color: #1d1b20;
+}
+.ProseMirror code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--surface-variant);
+  border-radius: 4px;
+  padding: 0.1em 0.3em;
+}
+
+.ProseMirror pre {
+  position: relative;
+  font-family: var(--mono);
+  font-size: 0.86em;
+  line-height: 1.5;
+  background: var(--surface);
+  border: 1px solid var(--surface-variant);
+  border-radius: 8px;
+  padding: 0.75em 0.9em;
+  white-space: pre-wrap;
+  tab-size: 4;
+}
+.ProseMirror pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+.ProseMirror pre[data-language]::before {
+  content: attr(data-language);
+  position: absolute;
+  top: 2px;
+  right: 8px;
+  font-size: 0.75em;
+  color: var(--fg-muted);
+  font-family: system-ui, sans-serif;
+}
+.ProseMirror pre.frontmatter {
+  border-style: dashed;
+}
+.ProseMirror pre.frontmatter::before {
+  content: 'Properties';
+  display: block;
+  font-family: system-ui, sans-serif;
+  font-size: 0.8em;
+  font-weight: 600;
+  color: var(--fg-muted);
+  margin-bottom: 0.3em;
+}
+
+.ProseMirror blockquote {
+  margin-left: 0;
+  margin-right: 0;
+  padding: 0.1em 0 0.1em 1em;
+  border-left: 3px solid var(--accent);
+  color: var(--fg-muted);
+}
+.ProseMirror hr {
+  border: none;
+  border-top: 2px solid var(--outline);
+  margin: 1.2em 0;
+}
+.ProseMirror hr.ProseMirror-selectednode {
+  border-top-color: var(--accent);
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 1.6em;
+  margin-top: 0.35em;
+  margin-bottom: 0.35em;
+}
+.ProseMirror li > p {
+  margin: 0;
+}
+.ProseMirror li + li {
+  margin-top: 0.15em;
+}
+.ProseMirror li::marker {
+  color: var(--fg-muted);
+}
+
+/* Task items: a checkbox in place of the bullet. */
+.ProseMirror li.task {
+  list-style: none;
+  display: flex;
+  align-items: flex-start;
+  margin-left: -1.6em;
+}
+.ProseMirror li.task > .checkbox {
+  flex: none;
+  width: 1.05em;
+  height: 1.05em;
+  margin: 0.27em 0.55em 0 0.1em;
+  border: 2px solid var(--fg-muted);
+  border-radius: 4px;
+  box-sizing: border-box;
+  cursor: pointer;
+  position: relative;
+}
+.ProseMirror li.task > .checkbox::after {
+  /* A larger touch target than the visible box. */
+  content: '';
+  position: absolute;
+  inset: -0.5em;
+}
+.ProseMirror li.task[data-checked='true'] > .checkbox {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.ProseMirror li.task[data-checked='true'] > .checkbox::before {
+  content: '';
+  position: absolute;
+  left: 0.26em;
+  top: 0.05em;
+  width: 0.28em;
+  height: 0.55em;
+  border: solid var(--on-accent);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.ProseMirror li.task > .task-content {
+  flex: 1;
+  min-width: 0;
+}
+.ProseMirror li.task[data-checked='true'] > .task-content > p:first-child {
+  color: var(--fg-muted);
+  text-decoration: line-through;
+}
+
+.ProseMirror table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.ProseMirror td,
+.ProseMirror th {
+  border: 1px solid var(--outline);
+  padding: 0.3em 0.6em;
+  min-width: 3em;
+  vertical-align: top;
+  position: relative;
+}
+.ProseMirror th {
+  background: var(--surface);
+  font-weight: 700;
+  text-align: left;
+}
+.ProseMirror .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  opacity: 0.15;
+  pointer-events: none;
+}
+
+.ProseMirror .image {
+  display: inline-block;
+  max-width: 100%;
+}
+.ProseMirror .image img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  vertical-align: middle;
+}
+.ProseMirror .image.broken img {
+  display: none;
+}
+.ProseMirror .image.broken::before {
+  content: '🖼 ' attr(data-alt);
+  display: inline-block;
+  font-size: 0.85em;
+  color: var(--fg-muted);
+  border: 1px dashed var(--outline);
+  border-radius: 6px;
+  padding: 0.15em 0.5em;
+}
+
+.ProseMirror .wikilink {
+  color: var(--accent);
+  font-weight: 500;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.ProseMirror .wikilink.missing {
+  opacity: 0.7;
+  border-bottom-style: dashed;
+}
+.ProseMirror .wikilink.embed::before {
+  content: '⧉ ';
+}
+.ProseMirror .wikilink.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.ProseMirror .tag {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 10px;
+  padding: 0 0.3em;
+}
+.ProseMirror .bare-url {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ProseMirror sup.footnote-ref {
+  color: var(--accent);
+  font-size: 0.75em;
+  padding: 0 0.15em;
+}
+.ProseMirror sup.footnote-ref::before {
+  content: '[';
+}
+.ProseMirror sup.footnote-ref::after {
+  content: ']';
+}
+.ProseMirror .footnote-def {
+  display: flex;
+  gap: 0.5em;
+  font-size: 0.92em;
+  color: var(--fg-muted);
+  border-top: 1px solid var(--surface-variant);
+  padding-top: 0.3em;
+}
+.ProseMirror .footnote-def::before {
+  content: attr(data-label) '.';
+  color: var(--accent);
+  flex: none;
+}
+.ProseMirror .footnote-def > .footnote-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.ProseMirror .html-inline,
+.ProseMirror .html-block,
+.ProseMirror .link-def {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  color: var(--fg-muted);
+  background: var(--surface);
+  border-radius: 4px;
+}
+.ProseMirror .html-inline {
+  padding: 0 0.25em;
+}
+.ProseMirror .html-block,
+.ProseMirror .link-def {
+  display: block;
+  white-space: pre-wrap;
+  padding: 0.3em 0.6em;
+}
+
+.ProseMirror p.placeholder::before {
+  content: 'Start writing…';
+  color: var(--fg-muted);
+  opacity: 0.6;
+  pointer-events: none;
+  position: absolute;
+}
+
+.ProseMirror .find-match {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 2px;
+}
+.ProseMirror .find-current {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+}
+
+/* Popups: the link bubble and wikilink suggestions. */
+.bubble,
+.suggest {
+  position: absolute;
+  z-index: 10;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--outline);
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+  font-size: 15px;
+}
+.bubble {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  max-width: calc(100vw - 16px);
+}
+.bubble-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+  padding: 0 8px;
+  font-size: 13px;
+}
+.bubble button {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+.bubble button.primary {
+  color: var(--accent);
+}
+.bubble button:active {
+  background: var(--surface-variant);
+}
+.suggest {
+  min-width: 200px;
+  max-width: calc(100vw - 16px);
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.suggest .item {
+  padding: 9px 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.suggest .item.selected {
+  background: var(--surface-variant);
+}
+.suggest .item.create {
+  color: var(--accent);
+}

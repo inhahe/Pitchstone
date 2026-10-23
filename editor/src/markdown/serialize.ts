@@ -84,6 +84,8 @@ function normalizeBlock(node: Node, ctx: NormContext): Node {
   let attrs = node.attrs
 
   if (t === nodes.doc) {
+    // Trailing empty paragraphs are not written (see parseMarkdown); at least one block stays.
+    while (children.length > 1 && isEmptyParagraph(children[children.length - 1])) children.pop()
     const body = children.filter((c) => c.type !== nodes.frontmatter)
     if (body.every(isEmptyParagraph)) {
       children = children.filter((c) => c.type === nodes.frontmatter)
@@ -382,14 +384,16 @@ function escapeText(text: string, flags: BlockFlags, opts: InlineOptions, inLink
       case '\\':
         esc = opts.level === 1 || next === null || isMdAsciiPunct(next.charCodeAt(0))
         break
+      // Between spaces a delimiter can neither open nor close, but the neighbours may be
+      // written as entities (which are punctuation), so full escaping does not rely on it.
       case '*':
-        esc = flags.star && !(prev !== null && next !== null && isWs(prev) && isWs(next))
+        esc = flags.star && (opts.level === 1 || !(prev !== null && next !== null && isWs(prev) && isWs(next)))
         break
       case '_':
         esc =
           flags.underscore &&
           !(prev !== null && next !== null && ALNUM.test(prev) && ALNUM.test(next)) &&
-          !(prev !== null && next !== null && isWs(prev) && isWs(next))
+          (opts.level === 1 || !(prev !== null && next !== null && isWs(prev) && isWs(next)))
         break
       case '~':
         esc = flags.tilde && (opts.level === 1 || prev === '~' || next === '~' || prev === null || next === null)
@@ -527,7 +531,14 @@ function renderInline(items: readonly Node[], opts: InlineOptions): string {
     }
     const inLink = active.some((m) => m.type === marks.link)
     if (item.isText) {
-      out += marks.code.isInSet(item.marks) ? codeSpan(item.text!) : escapeText(item.text!, flags, opts, inLink)
+      if (marks.code.isInSet(item.marks)) {
+        out += codeSpan(item.text!)
+      } else {
+        let text = escapeText(item.text!, flags, opts, inLink)
+        // `[^1](` would read as a link whose text is "^1".
+        if (items[index - 1]?.type === nodes.footnote_ref && text.startsWith('(')) text = '\\' + text
+        out += text
+      }
     } else if (item.type === nodes.image) {
       out += '![' + escapeAlt(item.attrs.alt) + '](' + destination(item.attrs.src, item.attrs.title) + ')'
     } else if (item.type === nodes.wikilink) {
@@ -650,12 +661,24 @@ interface TextblockResult {
 
 const cache = new WeakMap<Node, Map<string, TextblockResult>>()
 
-function inlineMatches(rendered: string, parent: NodeType, expected: Fragment, ctx: DocContext): boolean {
+/**
+ * Whether `text`, as written for a textblock of type `parent`, reads back as `expected`.
+ * Paragraphs and headings are parsed as whole blocks, so that block-level readings (a
+ * definition, a setext underline, a table) are caught too; table cells are parsed inline.
+ */
+function textblockMatches(text: string, parent: NodeType, expected: Fragment, ctx: DocContext, level?: number): boolean {
   try {
-    // The table rule unescapes \| before inline parsing; mirror it.
-    const src = parent === nodes.table_cell || parent === nodes.table_header ? unescapePipes(rendered) : rendered
-    const tokens = md.parseInline(src, structuredClone(ctx.env))
-    const children = tokens[0]?.children ?? []
+    let children
+    if (parent === nodes.table_cell || parent === nodes.table_header) {
+      // The table rule unescapes \| before inline parsing; mirror it.
+      children = md.parseInline(unescapePipes(text), structuredClone(ctx.env))[0]?.children ?? []
+    } else {
+      const src = parent === nodes.heading ? '#'.repeat(level ?? 1) + ' ' + text : text
+      const tokens = md.parse(src, structuredClone(ctx.env))
+      const open = parent === nodes.heading ? 'heading_open' : 'paragraph_open'
+      if (tokens.length !== 3 || tokens[0].type !== open || tokens[1].type !== 'inline') return false
+      children = tokens[1].children ?? []
+    }
     return Fragment.fromArray(convertInline(children, parent)).eq(expected)
   } catch (e) {
     if (e instanceof MarkdownParseError) return false
@@ -779,7 +802,7 @@ class TextblockRenderer {
       if (a.level < this.minLevel) continue
       const c = a.shrink ? (shrunk ??= shrinkMarks(content)) : content
       const text = this.finish(c, a)
-      if (inlineMatches(text, this.node.type, c, this.ctx)) {
+      if (textblockMatches(text, this.node.type, c, this.ctx, this.node.attrs.level)) {
         const node = c.eq(this.node.content) ? this.node : this.node.type.create(this.node.attrs, c)
         return {text, node, exact: true}
       }
@@ -793,26 +816,32 @@ class TextblockRenderer {
 
   /**
    * Last resort for formatting markdown cannot express (pathological overlaps of several marks
-   * at punctuation): removes formatting runs, shortest first, until the content round-trips.
-   * Plain text with full escaping always does, so this terminates.
+   * at punctuation): removes formatting runs one at a time until the content round-trips, and
+   * if no single removal is enough, removes the first and tries again. Plain text with full
+   * escaping always round-trips, so this terminates.
    */
   dropFormattingUntilExact(): TextblockResult {
     let units = toUnits(iterFragment(shrinkMarks(this.node.content)))
     const without = (us: Unit[], run: {type: Mark['type']; from: number; to: number}) =>
       us.map((u, i) => (i >= run.from && i < run.to ? {...u, marks: run.type.removeFromSet(u.marks)} : u))
     for (;;) {
+      // Delimiter marks first, shortest first; code and links only if nothing else helps
+      // (a code span holding `]:` as a link's whole text reads as a definition, for one).
       const runs: {type: Mark['type']; from: number; to: number}[] = []
       for (const name of DELIMITER_MARKS) {
         forEachRun(units, schema.marks[name], (from, to) => runs.push({type: schema.marks[name], from, to}))
       }
+      runs.sort((a, b) => a.to - a.from - (b.to - b.from))
+      const last: typeof runs = []
+      for (const type of [marks.code, marks.link]) forEachRun(units, type, (from, to) => last.push({type, from, to}))
+      runs.push(...last)
       if (!runs.length) {
         const content = Fragment.fromArray(fromUnits(units))
         const a: Attempt = {level: 1, emChar: '*', shrink: false}
         const text = this.finish(content, a)
-        const exact = inlineMatches(text, this.node.type, content, this.ctx)
+        const exact = textblockMatches(text, this.node.type, content, this.ctx, this.node.attrs.level)
         return {text, node: this.node.type.create(this.node.attrs, content), exact}
       }
-      runs.sort((a, b) => a.to - a.from - (b.to - b.from))
       for (const run of runs) {
         const r = this.tryRender(Fragment.fromArray(fromUnits(without(units, run))))
         if (r) return r

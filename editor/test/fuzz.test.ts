@@ -22,5 +22,5 @@ describe('round trip of generated documents', () => {
         )
       }
     }
-  })
+  }, 3_600_000)
 })

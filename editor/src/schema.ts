@@ -215,6 +215,8 @@ const nodes: Record<string, NodeSpec> = {
     group: 'inline',
     selectable: false,
     marks: '',
+    // Converting a paragraph to a code block turns breaks into newlines, and back.
+    linebreakReplacement: true,
     parseDOM: [{tag: 'br'}],
     toDOM: (): DOMOutputSpec => ['br'],
   },
@@ -366,6 +368,8 @@ const marks: Record<string, MarkSpec> = {
     toDOM: (): DOMOutputSpec => ['mark', 0],
   },
   code: {
+    // Tells ProseMirror (and the input rules) that this mark holds code, not prose.
+    code: true,
     parseDOM: [{tag: 'code'}],
     toDOM: (): DOMOutputSpec => ['code', 0],
   },
