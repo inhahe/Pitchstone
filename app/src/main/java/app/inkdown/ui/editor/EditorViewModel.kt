@@ -385,7 +385,7 @@ class EditorViewModel(
             } else {
                 // A note emptied by hand goes to the trash, recoverable, rather than away.
                 repo.moveToTrash(listOf(noteId))
-                container.listMessages.tryEmit(
+                container.listMessages.trySend(
                     ListMessage("Empty note moved to trash", "Undo") { repo.restore(listOf(noteId)) },
                 )
             }
@@ -401,7 +401,7 @@ class EditorViewModel(
         if (c.title == old || !settings.value.updateLinksOnRename) return
         val changed = repo.propagateRename(noteId, old, c.title)
         linkedTitle = c.title
-        if (changed > 0) _events.send(EditorEvent.Message("Updated links in $changed ${if (changed == 1) "note" else "notes"}"))
+        if (changed > 0) container.listMessages.send(ListMessage("Updated links in $changed ${if (changed == 1) "note" else "notes"}"))
     }
 
     private fun openWikilink(target: String) = flushThen {
@@ -485,7 +485,7 @@ class EditorViewModel(
 
     fun moveToTrash() = flushThen {
         repo.moveToTrash(listOf(noteId))
-        container.listMessages.tryEmit(ListMessage("Note moved to trash", "Undo") { repo.restore(listOf(noteId)) })
+        container.listMessages.trySend(ListMessage("Note moved to trash", "Undo") { repo.restore(listOf(noteId)) })
         _events.send(EditorEvent.Close)
     }
 

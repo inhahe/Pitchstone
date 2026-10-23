@@ -8,7 +8,7 @@ import app.inkdown.data.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
@@ -26,8 +26,11 @@ class AppContainer(context: Context) {
     /** Work that must finish even if the screen that started it goes away (saving). */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    /** Messages for the note list's snackbar, from other screens (e.g. "Moved to trash"). */
-    val listMessages = MutableSharedFlow<ListMessage>(extraBufferCapacity = 4)
+    /**
+     * Messages for the note list's snackbar, from any screen ("Moved to trash"). A channel, so a
+     * message sent while the list is not showing waits until it is.
+     */
+    val listMessages = Channel<ListMessage>(capacity = 16)
 
     /** A scope for the note list to switch to (e.g. tapping a #tag in a note). */
     val listRequests = MutableStateFlow<ListRequest?>(null)

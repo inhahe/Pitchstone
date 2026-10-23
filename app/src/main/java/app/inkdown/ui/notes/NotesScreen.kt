@@ -92,6 +92,7 @@ import app.inkdown.ui.export.ExportDialog
 import app.inkdown.ui.export.ExportSource
 import app.inkdown.ui.export.defaultExportName
 import app.inkdown.ui.importer.ImportDialog
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /** A dialog the list screen can show. */
@@ -129,7 +130,7 @@ fun NotesScreen(onOpenNote: (Long) -> Unit, onSettings: () -> Unit, onTrash: () 
     var dialog by remember { mutableStateOf<ListDialog?>(null) }
 
     LaunchedEffect(Unit) {
-        container.listMessages.collect { msg ->
+        container.listMessages.receiveAsFlow().collect { msg ->
             val result = snackbar.showSnackbar(msg.text, actionLabel = msg.undoLabel, duration = SnackbarDuration.Short)
             if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
         }

@@ -157,7 +157,7 @@ class NotesViewModel(private val container: AppContainer) : ViewModel() {
         repo.move(ids, folder)
         clearSelection()
         val n = ids.size
-        container.listMessages.emit(ListMessage("Moved $n ${if (n == 1) "note" else "notes"} to ${if (folder.isEmpty()) "the top level" else FolderPaths.name(folder)}"))
+        container.listMessages.send(ListMessage("Moved $n ${if (n == 1) "note" else "notes"} to ${if (folder.isEmpty()) "the top level" else FolderPaths.name(folder)}"))
     }
 
     fun trashSelection() = viewModelScope.launch {
@@ -165,7 +165,7 @@ class NotesViewModel(private val container: AppContainer) : ViewModel() {
         repo.moveToTrash(ids)
         clearSelection()
         val n = ids.size
-        container.listMessages.emit(ListMessage("${if (n == 1) "Note" else "$n notes"} moved to trash", "Undo") { repo.restore(ids) })
+        container.listMessages.send(ListMessage("${if (n == 1) "Note" else "$n notes"} moved to trash", "Undo") { repo.restore(ids) })
     }
 
     fun createFolder(path: String) = viewModelScope.launch { repo.createFolder(path) }
@@ -181,7 +181,7 @@ class NotesViewModel(private val container: AppContainer) : ViewModel() {
         val trashed = repo.deleteFolder(path)
         val s = scope.value
         if (s is Scope.Folder && FolderPaths.isWithin(s.path, path)) scope.value = Scope.Folder(FolderPaths.parent(path))
-        container.listMessages.emit(
+        container.listMessages.send(
             ListMessage(if (trashed == 0) "Folder deleted" else "Folder deleted; $trashed ${if (trashed == 1) "note" else "notes"} moved to trash"),
         )
     }

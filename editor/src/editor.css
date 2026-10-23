@@ -51,8 +51,10 @@ body {
   outline: none;
   resize: none;
   overflow: hidden;
-  padding: 0 0 8px;
-  margin: 0 0 4px;
+  /* A faint rule sets the note's title apart from a first heading in the text. */
+  padding: 0 0 10px;
+  margin: 0 0 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--outline) 60%, transparent);
   background: transparent;
   color: var(--fg);
   font: inherit;
