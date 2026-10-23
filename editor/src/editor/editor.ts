@@ -46,6 +46,7 @@ import {enterShortcut, markdownInputRules} from './rules'
 import {applySettings, type EditorSettings, settings} from './settings'
 import {suggestPlugin} from './suggest'
 import {ImageView, ListItemView} from './views'
+import type {SerializeRequest, SerializeResponse} from '../worker'
 
 const {nodes, marks} = schema
 
@@ -102,8 +103,18 @@ export class InkdownEditor {
    * never be shown or saved, so leaving source mode always re-parses.
    */
   private placeholder = false
+  /** Counts edits; a background serialization is for the count it started at. */
+  private editGen = 0
+  /** The edit count the app last received, in a `changed` message or a flush. */
+  private reportedGen = 0
+  /** Serializes for autosave off the main thread; null where a worker cannot run. */
+  private worker: Worker | null = null
+  /** The background serialization in progress. */
+  private job: {id: number; gen: number; title: string} | null = null
+  private jobIds = 0
 
   constructor(root: HTMLElement) {
+    this.worker = this.startWorker()
     this.title = root.querySelector('#title') as HTMLTextAreaElement
     this.source = root.querySelector('#source') as HTMLTextAreaElement
     const mount = root.querySelector('#editor') as HTMLElement
@@ -172,7 +183,8 @@ export class InkdownEditor {
       else if (this.mode === 'source') this.source.focus()
     })
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') this.emitChange()
+      // A hidden page may be frozen at any moment: no waiting for the worker.
+      if (document.visibilityState === 'hidden') this.emitChange(true)
     })
     const keepCursorVisible = () => {
       if (this.mode === 'edit' && this.view.hasFocus()) {
@@ -229,6 +241,7 @@ export class InkdownEditor {
 
   private markDirty() {
     this.dirty = true
+    this.editGen++
     if (this.saveTimer) clearTimeout(this.saveTimer)
     this.saveTimer = setTimeout(() => this.emitChange(), SAVE_DELAY_MS)
   }
@@ -237,11 +250,15 @@ export class InkdownEditor {
   private currentMarkdown(): {markdown: string; exact: boolean} {
     if (this.mode === 'source') return {markdown: this.source.value, exact: true}
     const r = serializeMarkdown(this.view.state.doc)
-    if (!r.exact && !this.warnedInexact) {
+    this.noteExactness(r.exact)
+    return {markdown: r.markdown, exact: r.exact}
+  }
+
+  private noteExactness(exact: boolean) {
+    if (!exact && !this.warnedInexact) {
       this.warnedInexact = true
       post({type: 'warning', code: 'inexact', message: 'Some formatting in this note could not be saved exactly.'})
     }
-    return {markdown: r.markdown, exact: r.exact}
   }
 
   /**
@@ -262,12 +279,77 @@ export class InkdownEditor {
       return {dirty: true, markdown: '', title, exact: false, seq: this.seq, error: e instanceof Error ? e.message : String(e)}
     }
     this.dirty = false
+    this.reportedGen = this.editGen
     this.seq++
     return {dirty: true, markdown: r.markdown, title, exact: r.exact, seq: this.seq}
   }
 
-  /** Reports the pending change to the app, if any. */
-  private emitChange() {
+  /**
+   * Reports the pending change to the app, if any. The markdown is made in the worker when
+   * there is one, unless `now`.
+   */
+  private emitChange(now = false) {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    if (!this.dirty) return
+    if (!now && this.worker && this.mode !== 'source') {
+      const id = ++this.jobIds
+      this.job = {id, gen: this.editGen, title: this.title.value}
+      const request: SerializeRequest = {id, doc: this.view.state.doc.toJSON()}
+      this.worker.postMessage(request)
+      return
+    }
+    this.emitChangeNow()
+  }
+
+  /**
+   * A background serialization finished. It is reported unless something as new was reported
+   * already (by a flush meanwhile): an older version must never reach the app after a newer
+   * one. Edits made since leave the change pending; their own autosave follows.
+   */
+  private onSerialized(r: SerializeResponse) {
+    const job = this.job
+    if (!job || r.id !== job.id) return
+    this.job = null
+    if (!this.dirty || job.gen <= this.reportedGen) return
+    if ('error' in r) {
+      // Again here, where a failure is reported the usual way.
+      this.emitChangeNow()
+      return
+    }
+    this.noteExactness(r.exact)
+    this.reportedGen = job.gen
+    if (job.gen === this.editGen) this.dirty = false
+    this.failing = false
+    this.seq++
+    post({type: 'changed', markdown: r.markdown, title: job.title, exact: r.exact, seq: this.seq})
+  }
+
+  /** Starts the autosave worker; null if the page cannot run one (a file:// page, say). */
+  private startWorker(): Worker | null {
+    let worker: Worker
+    try {
+      worker = new Worker('editor-worker.js')
+    } catch {
+      return null
+    }
+    worker.onmessage = (e: MessageEvent<SerializeResponse>) => this.onSerialized(e.data)
+    // A worker that fails to load or dies is dropped; autosave carries on here.
+    worker.onerror = () => {
+      worker.terminate()
+      if (this.worker === worker) this.worker = null
+      if (this.job) {
+        this.job = null
+        this.emitChangeNow()
+      }
+    }
+    return worker
+  }
+
+  /** Reports the pending change to the app, if any, serializing it here. */
+  private emitChangeNow() {
     const r = this.flush()
     if (r.error !== undefined) {
       if (!this.failing) post({type: 'warning', code: 'serializeFailed', message: r.error})
@@ -284,6 +366,9 @@ export class InkdownEditor {
     if (this.saveTimer) clearTimeout(this.saveTimer)
     this.saveTimer = null
     this.dirty = false
+    this.editGen++
+    this.reportedGen = this.editGen
+    this.job = null
     this.warnedInexact = false
     this.failing = false
     this.placeholder = false

@@ -3,7 +3,15 @@ import {pathToFileURL} from 'node:url'
 import {join} from 'node:path'
 import {linkKey} from '../src/editor/links'
 
-export const PAGE = pathToFileURL(join(import.meta.dirname, '..', 'dist-test', 'index.html')).href
+const DIST = join(import.meta.dirname, '..', 'dist-test')
+const ORIGIN = 'http://inkdown.test'
+/**
+ * The page, served from an http origin (routed to dist-test) as the app serves it from its own:
+ * a file:// page cannot start the autosave worker.
+ */
+export const PAGE = `${ORIGIN}/index.html`
+/** The page as a file, where it autosaves without a worker. */
+export const FILE_PAGE = pathToFileURL(join(DIST, 'index.html')).href
 
 export interface Flush {
   dirty: boolean
@@ -31,9 +39,14 @@ function asChrome90() {
   for (const name of ['toSorted', 'toReversed', 'toSpliced', 'with']) drop(Array.prototype, name) // 110
 }
 
-export async function open(page: Page, markdown = '', opts: {shortcuts?: boolean; titles?: string[]; mode?: string} = {}) {
+export async function open(
+  page: Page,
+  markdown = '',
+  opts: {shortcuts?: boolean; titles?: string[]; mode?: string; url?: string} = {},
+) {
   await page.addInitScript(asChrome90)
-  await page.goto(PAGE)
+  await page.route(`${ORIGIN}/**`, (route) => route.fulfill({path: join(DIST, new URL(route.request().url()).pathname)}))
+  await page.goto(opts.url ?? PAGE)
   await page.evaluate(
     ([markdown, shortcuts, titles, keys, mode]) => {
       window.inkdown.load(

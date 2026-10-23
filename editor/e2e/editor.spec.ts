@@ -1,5 +1,5 @@
 import {expect, test} from '@playwright/test'
-import {command, flush, markdown, messages, open, typeComposed} from './helpers'
+import {command, FILE_PAGE, flush, markdown, messages, open, typeComposed} from './helpers'
 
 test.describe('markdown shortcuts on', () => {
   const cases: [string, string, string][] = [
@@ -260,12 +260,61 @@ test.describe('saving', () => {
     expect(f.dirty).toBe(false)
   })
 
-  test('edits are reported as markdown after a pause', async ({page}) => {
+  test('edits are reported as markdown after a pause, made in the worker', async ({page}) => {
     await open(page)
     await page.keyboard.type('autosaved')
-    await page.waitForTimeout(700)
-    const changed = (await messages(page)).filter((m) => m.type === 'changed')
-    expect(changed.at(-1)!.markdown).toBe('autosaved\n')
+    await expect.poll(async () => (await messages(page)).filter((m) => m.type === 'changed').at(-1)?.markdown).toBe('autosaved\n')
+    expect(page.workers()).toHaveLength(1)
+    expect((await flush(page)).dirty).toBe(false)
+  })
+
+  test('without a worker (a file:// page), edits are reported all the same', async ({page}) => {
+    await open(page, '', {url: FILE_PAGE})
+    await page.keyboard.type('autosaved')
+    await expect.poll(async () => (await messages(page)).filter((m) => m.type === 'changed').at(-1)?.markdown).toBe('autosaved\n')
+    expect(page.workers()).toHaveLength(0)
+  })
+
+  test('a version made in the worker never follows a newer one', async ({page}) => {
+    await open(page, Array.from({length: 300}, (_, i) => `Paragraph **${i}** with [[Link ${i}]].`).join('\n\n') + '\n')
+    // As soon as autosave hands the note to the worker, and before the worker can answer (a
+    // microtask runs before any message): edit, flush (the newest version reaches the app),
+    // and edit again.
+    const flushing = page.evaluate(
+      () =>
+        new Promise<{flushed: string; before: number}>((resolve) => {
+          const post = Worker.prototype.postMessage
+          Worker.prototype.postMessage = function (this: Worker, ...args: Parameters<Worker['postMessage']>) {
+            Worker.prototype.postMessage = post
+            post.apply(this, args)
+            queueMicrotask(() => {
+              window.inkdown.command('insertWikilink', JSON.stringify({target: 'Newest'}))
+              const flushed = window.inkdown.flush()
+              const before = (window.__inkdownMessages ?? []).filter((m) => m.type === 'changed').length
+              window.inkdown.command('insertWikilink', JSON.stringify({target: 'After'}))
+              resolve({flushed, before})
+            })
+          } as Worker['postMessage']
+        }),
+    )
+    await page.keyboard.type('x')
+    const {flushed, before} = await flushing
+    expect(JSON.parse(flushed).markdown).toContain('[[Newest]]')
+    const changed = async () => (await messages(page)).filter((m) => m.type === 'changed').map((m) => m.markdown as string)
+    await expect.poll(async () => (await changed()).at(-1)).toContain('[[After]]')
+    // Nothing older than the flushed version came after it.
+    for (const md of (await changed()).slice(before)) expect(md).toContain('[[Newest]]')
+  })
+
+  test('edits made while the worker runs stay pending, and are reported after', async ({page}) => {
+    await open(page, Array.from({length: 300}, (_, i) => `Paragraph ${i}.`).join('\n\n') + '\n')
+    await page.keyboard.type('a')
+    await page.evaluate(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 450))
+      window.inkdown.command('insertWikilink', JSON.stringify({target: 'Later'}))
+    })
+    await expect.poll(async () => (await messages(page)).filter((m) => m.type === 'changed').at(-1)?.markdown).toContain('a[[Later]]')
+    expect((await flush(page)).dirty).toBe(false)
   })
 
   test('title edits are reported', async ({page}) => {

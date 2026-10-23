@@ -1,5 +1,5 @@
 // Bundles the editor page into one directory the Android app serves from its assets:
-// index.html, editor.js, editor.css and prosemirror.css.
+// index.html, editor.js, editor-worker.js, editor.css and prosemirror.css.
 //
 //   node build.mjs [--out <dir>] [--dev]
 //
@@ -19,17 +19,23 @@ const dev = args.includes('--dev')
 
 mkdirSync(out, {recursive: true})
 
-await build({
-  entryPoints: [join(here, 'src/main.ts')],
-  bundle: true,
-  format: 'iife',
-  target: ['chrome90'],
-  minify: !dev,
-  sourcemap: dev ? 'inline' : false,
-  outfile: join(out, 'editor.js'),
-  legalComments: 'none',
-  logLevel: 'warning',
-})
+// The page, and the worker it serializes notes in for autosave (src/worker.ts).
+for (const [entry, file] of [
+  ['src/main.ts', 'editor.js'],
+  ['src/worker.ts', 'editor-worker.js'],
+]) {
+  await build({
+    entryPoints: [join(here, entry)],
+    bundle: true,
+    format: 'iife',
+    target: ['chrome90'],
+    minify: !dev,
+    sourcemap: dev ? 'inline' : false,
+    outfile: join(out, file),
+    legalComments: 'none',
+    logLevel: 'warning',
+  })
+}
 
 // ProseMirror's own required styles, then the gap cursor's and the tables'.
 const pmCss = [

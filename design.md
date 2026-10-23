@@ -117,7 +117,18 @@ once per failing streak, `inexact`).
 
 ## Saving
 
-`EditorViewModel` keeps `content` (newest known), `saved` (what the database has) and
+**In the page.** Autosave (400 ms after the last edit, and on blur) serializes in a Web Worker
+(`src/worker.ts`, bundled as `editor-worker.js`): the page sends `doc.toJSON()` and posts the
+answer as `changed`, so typing never waits for a long note's serialization (a 72 KB note: about
+65 ms in the worker, about 5 ms left on the page, against 20-40 ms on the page before, on the
+emulator). Every edit counts up `editGen`; a worker answer is reported only if no flush has
+already reported that edit count or a later one (`reportedGen`), so an older version never
+reaches the app after a newer one, and edits made meanwhile stay pending. `flush()` and the
+page-hidden save serialize synchronously on the page, as does everything where no worker can
+run (a `file://` page) or the worker fails. The e2e tests serve the page from a routed http
+origin so that the worker runs.
+
+**In the app.** `EditorViewModel` keeps `content` (newest known), `saved` (what the database has) and
 `inFlight`. Each `changed` message updates `content` and starts `saveNow()` in the
 application scope (leaving the screen never cancels a save); saves are serialized by a mutex
 and always write the newest content. Before anything that leaves the note (back, opening a
