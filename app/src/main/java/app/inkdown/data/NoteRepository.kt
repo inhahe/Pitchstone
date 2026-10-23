@@ -130,6 +130,26 @@ class NoteRepository(
 
     suspend fun revision(id: Long): RevisionEntity? = dao.revision(id)
 
+    /**
+     * Deletes the earlier version [revisionId] of note [noteId]. Returns the version deleted, so
+     * that [undeleteRevision] can put it back, or null if the note has no such version.
+     */
+    suspend fun deleteRevision(noteId: Long, revisionId: Long): RevisionEntity? = db.withTransaction {
+        val revision = dao.revision(revisionId)?.takeIf { it.noteId == noteId } ?: return@withTransaction null
+        dao.deleteRevision(noteId, revisionId)
+        revision
+    }
+
+    /** Puts back a version removed by [deleteRevision] (Undo), unless its note is gone. */
+    suspend fun undeleteRevision(revision: RevisionEntity) {
+        db.withTransaction {
+            if (dao.note(revision.noteId) != null && dao.revision(revision.id) == null) dao.insertRevision(revision)
+        }
+    }
+
+    /** Deletes every earlier version of note [noteId]; returns how many there were. */
+    suspend fun deleteAllRevisions(noteId: Long): Int = dao.deleteRevisions(noteId)
+
     // ---- Writing ------------------------------------------------------------------------------
 
     private suspend fun indexOf(title: String, body: String): NoteIndex =

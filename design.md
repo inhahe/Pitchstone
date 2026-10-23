@@ -157,7 +157,9 @@ Room database `inkdown.db` (WAL), schema exported to `app/schemas`:
 - `revisions`: earlier versions; a revision of the replaced content is written when the last
   one is older than 10 minutes, and always when a save empties the note or cuts it by more
   than half (so a deletion can be undone); at most 60 per note, older than 90 days pruned
-  beyond 10.
+  beyond 10. The history screen restores a version (`restoreRevision`, which keeps the current
+  content as a version) and deletes one (`deleteRevision`, Undo re-inserts it with its id) or
+  all (`deleteAllRevisions`).
 
 Folder trees are matched in SQL by `folder = :old OR substr(folder, 1, length(:old) + 1) =
 :old || '/'`: case-sensitive (unlike `LIKE`) and counted in SQLite's own characters (a Kotlin

@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -14,12 +15,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -42,40 +49,64 @@ import app.inkdown.data.RevisionSummary
 import app.inkdown.ui.common.Dates
 import kotlinx.coroutines.launch
 
-/** Earlier versions of a note; any of them can be restored (the current one is kept too). */
+/**
+ * Earlier versions of a note. Any of them can be restored (the current one is kept as a version
+ * too) or deleted: one at a time with Undo, or all at once after a confirmation.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(noteId: Long, onBack: () -> Unit) {
     val repo = LocalContext.current.container.repository
     val revisions by repo.revisions(noteId).collectAsStateWithLifecycle(initialValue = emptyList())
     val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
     var preview by remember { mutableStateOf<RevisionSummary?>(null) }
+    var confirmDeleteAll by remember { mutableStateOf(false) }
+
+    fun delete(r: RevisionSummary) = scope.launch {
+        val deleted = repo.deleteRevision(noteId, r.id) ?: return@launch
+        val result = snackbar.showSnackbar("Version deleted", actionLabel = "Undo", duration = SnackbarDuration.Long)
+        if (result == SnackbarResult.ActionPerformed) repo.undeleteRevision(deleted)
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Version history") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+                actions = {
+                    if (revisions.isNotEmpty()) {
+                        IconButton(onClick = { confirmDeleteAll = true }) { Icon(Icons.Outlined.DeleteSweep, "Delete all versions") }
+                    }
+                },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         if (revisions.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding).padding(32.dp), contentAlignment = Alignment.Center) {
                 Text(
-                    "No earlier versions yet. While you edit, the previous version is kept every 10 minutes.",
+                    "No earlier versions. While you edit, the previous version is kept every 10 minutes, " +
+                        "and before you empty a note or delete most of it.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         } else {
             LazyColumn(Modifier.padding(padding)) {
                 items(revisions, key = { it.id }) { r ->
-                    Column(Modifier.fillMaxWidth().clickable { preview = r }.padding(horizontal = 20.dp, vertical = 12.dp)) {
-                        Text(Dates.full(r.savedAt), style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "“${r.title.ifBlank { "Untitled" }}” · ${r.length} characters",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    Row(
+                        Modifier.fillMaxWidth().clickable { preview = r }.padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                            Text(Dates.full(r.savedAt), style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "“${r.title.ifBlank { "Untitled" }}” · ${r.length} characters",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(onClick = { delete(r) }) { Icon(Icons.Outlined.Delete, "Delete this version") }
                     }
                 }
             }
@@ -105,9 +136,38 @@ fun HistoryScreen(noteId: Long, onBack: () -> Unit) {
                         repo.restoreRevision(noteId, r.id)
                         onBack()
                     }
-                }) { Text("Restore this version") }
+                }) { Text("Restore") }
             },
-            dismissButton = { TextButton(onClick = { preview = null }) { Text("Close") } },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        preview = null
+                        delete(r)
+                    }) { Text("Delete") }
+                    TextButton(onClick = { preview = null }) { Text("Close") }
+                }
+            },
+        )
+    }
+
+    if (confirmDeleteAll) {
+        val count = revisions.size
+        AlertDialog(
+            onDismissRequest = { confirmDeleteAll = false },
+            title = { Text("Delete all versions?") },
+            text = {
+                Text(
+                    "The ${if (count == 1) "earlier version" else "$count earlier versions"} of this note will be " +
+                        "deleted for good. The note itself stays as it is.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeleteAll = false
+                    scope.launch { repo.deleteAllRevisions(noteId) }
+                }) { Text("Delete all") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteAll = false }) { Text("Cancel") } },
         )
     }
 }

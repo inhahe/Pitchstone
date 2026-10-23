@@ -70,8 +70,9 @@ and stores each note as markdown.
   again, stay and copy your text somewhere safe, or leave anyway.
 - **Version history** (⋮ → Version history): while you edit, the previous version of a note is
   kept every 10 minutes, and always right before you empty a note or delete more than half of
-  it (up to 60 versions, the oldest pruned after 90 days). Any version can be restored; the
-  current one is kept when you do.
+  it (up to 60 versions, the oldest pruned after 90 days). Tap a version to read it, then
+  restore it (the current text is kept as a version too) or delete it. The bin icon on a version
+  deletes it (with Undo); the icon at the top deletes them all.
 - **Trash**: deleted notes stay there for 30 days and can be restored. A note you empty by hand
   goes to the trash (with Undo) rather than disappearing; only a new note you never typed in is
   discarded.

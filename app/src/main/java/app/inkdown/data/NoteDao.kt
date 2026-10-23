@@ -159,6 +159,12 @@ interface NoteDao {
     @Query("SELECT * FROM revisions WHERE id = :id")
     suspend fun revision(id: Long): RevisionEntity?
 
+    @Query("DELETE FROM revisions WHERE noteId = :noteId AND id = :id")
+    suspend fun deleteRevision(noteId: Long, id: Long): Int
+
+    @Query("DELETE FROM revisions WHERE noteId = :noteId")
+    suspend fun deleteRevisions(noteId: Long): Int
+
     /** Keeps the newest [keep] revisions of a note and drops older ones past [before]. */
     @Query(
         "DELETE FROM revisions WHERE noteId = :noteId AND savedAt < :before AND id NOT IN " +

@@ -78,6 +78,29 @@ class NoteRepositoryTest {
     }
 
     @Test
+    fun `versions can be deleted one at a time, put back, or all at once`() = runBlocking<Unit> {
+        val id = repo.create("T", "v1")
+        val other = repo.create("O", "o1")
+        now += 1000
+        repo.save(id, "T", "v2")
+        repo.save(other, "O", "o2")
+        now += NoteRepository.REVISION_INTERVAL_MS
+        repo.save(id, "T", "v3")
+        val (newest, oldest) = repo.revisions(id).first()
+        val otherRevision = repo.revisions(other).first().single()
+        assertThat(repo.deleteRevision(id, otherRevision.id)).isNull() // not this note's
+        val deleted = repo.deleteRevision(id, oldest.id)!!
+        assertThat(deleted.body).isEqualTo("v1")
+        assertThat(repo.revisions(id).first().map { it.id }).containsExactly(newest.id)
+        repo.undeleteRevision(deleted)
+        assertThat(repo.revisions(id).first().map { it.id }).containsExactly(newest.id, oldest.id).inOrder()
+        assertThat(repo.deleteAllRevisions(id)).isEqualTo(2)
+        assertThat(repo.revisions(id).first()).isEmpty()
+        assertThat(repo.note(id)!!.body).isEqualTo("v3")
+        assertThat(repo.revisions(other).first()).hasSize(1)
+    }
+
+    @Test
     fun `only a note never written is pristine`() = runBlocking<Unit> {
         val fresh = repo.create()
         assertThat(repo.isPristine(fresh)).isTrue()
