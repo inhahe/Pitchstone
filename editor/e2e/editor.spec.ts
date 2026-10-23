@@ -86,6 +86,25 @@ test.describe('markdown shortcuts on', () => {
     expect(await markdown(page)).toBe('see [[Alpha project]] ok\n')
   })
 
+  test('picking a title with # in it links by its link name and shows the title', async ({page}) => {
+    await open(page, '', {titles: ['C# notes']})
+    await page.keyboard.type('[[c')
+    await page.locator('.suggest .item').first().click()
+    expect(await markdown(page)).toBe('[[C notes|C# notes]]\n')
+  })
+
+  test('links to missing notes are marked', async ({page}) => {
+    await open(page, '[[Plan]] [[plan.md#Goals]] [[Nope]]\n', {titles: ['Plan']})
+    await expect(page.locator('.ProseMirror .missing')).toHaveText(['Nope'])
+  })
+
+  test('Enter after a link followed by --- keeps the line', async ({page}) => {
+    await open(page, '[[Note]]---\n')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('x')
+    expect(await markdown(page)).toBe('[[Note]]---\n\nx\n')
+  })
+
   test('pasting markdown formats it', async ({page}) => {
     await open(page)
     await page.evaluate(() => {
@@ -166,6 +185,25 @@ test.describe('toolbar commands', () => {
     expect(await markdown(page)).toBe('text\n')
   })
 
+  test('a code block keeps links to notes and inline HTML, as markdown', async ({page}) => {
+    await open(page, 'See [[Plan|the plan]] and <b>x</b>\n')
+    await command(page, 'codeBlock')
+    expect(await markdown(page)).toBe('```\nSee [[Plan|the plan]] and <b>x</b>\n```\n')
+  })
+
+  test('code blocks made across a list keep links too', async ({page}) => {
+    await open(page, 'a [[X]]\n\n- b [[Y]]\n')
+    await page.keyboard.press('Control+a')
+    await command(page, 'codeBlock')
+    expect(await markdown(page)).toBe('```\na [[X]]\n```\n\n- ```\n  b [[Y]]\n  ```\n')
+  })
+
+  test('find marks the right text after characters whose lower case is longer', async ({page}) => {
+    await open(page, 'İİ ab Ab\n')
+    await page.evaluate(() => window.inkdown.find('ab'))
+    await expect(page.locator('.ProseMirror .find-match')).toHaveText(['ab', 'Ab'])
+  })
+
   test('indent and outdent list items', async ({page}) => {
     await open(page, '- a\n- b\n')
     await command(page, 'indent')
@@ -203,11 +241,15 @@ test.describe('toolbar commands', () => {
 
   test('toolbar state follows the cursor', async ({page}) => {
     await open(page, '**bold** plain\n')
-    await page.keyboard.press('Home')
-    await page.keyboard.press('ArrowRight')
-    await page.waitForTimeout(50)
-    const states = (await messages(page)).filter((m) => m.type === 'state')
-    expect((states.at(-1)!.state as {strong: boolean}).strong).toBe(true)
+    // Moves the cursor into "bold" the way a tap does. (Arrow keys right after loading are
+    // sometimes ignored by the emulated mobile browser.)
+    await page.evaluate(() => getSelection()!.collapse(document.querySelector('.ProseMirror strong')!.firstChild, 1))
+    // The editor reads the moved DOM selection when the browser reports it, a little later.
+    const strong = async () => {
+      const states = (await messages(page)).filter((m) => m.type === 'state')
+      return (states.at(-1)?.state as {strong: boolean} | undefined)?.strong
+    }
+    await expect.poll(strong).toBe(true)
   })
 })
 
@@ -267,5 +309,20 @@ test.describe('modes', () => {
     await expect(bubble).toBeVisible()
     await bubble.getByText('Open').click()
     expect(await messages(page)).toContainEqual({type: 'openLink', href: 'https://example.com'})
+  })
+})
+
+test.describe('links into a note', () => {
+  test('scroll to a heading or a block', async ({page}) => {
+    const filler = Array.from({length: 80}, (_, i) => `Paragraph ${i}.`).join('\n\n')
+    await open(page, `${filler}\n\n## Far: away\n\nA block ^blk-1\n\n${filler}\n`)
+    const scroll = (anchor: string) => page.evaluate((a) => window.inkdown.scrollToAnchor(a), anchor)
+    const top = (selector: string) => page.evaluate((s) => document.querySelector(s)!.getBoundingClientRect().top, selector)
+    expect(await scroll('Top#Far away')).toBe(true)
+    expect(Math.abs(await top('.ProseMirror h2'))).toBeLessThan(5)
+    expect(await scroll('^BLK-1')).toBe(true)
+    expect(Math.abs(await top('.ProseMirror h2 + p'))).toBeLessThan(5)
+    expect(await scroll('Nowhere')).toBe(false)
+    expect(await scroll('^')).toBe(false)
   })
 })

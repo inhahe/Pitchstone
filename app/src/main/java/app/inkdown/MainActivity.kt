@@ -88,11 +88,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private suspend fun importFile(uri: Uri): Long? = withContext(Dispatchers.IO) {
+        // Only content shared by another app: a file:// URI would be read with this app's own
+        // permissions (its private files included).
+        if (uri.scheme != "content") return@withContext null
         runCatching {
             var name = "Imported note"
-            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                if (c.moveToFirst()) c.getString(0)?.let { name = it }
+            var size = 0L
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    c.getString(0)?.let { name = it }
+                    if (!c.isNull(1)) size = c.getLong(1)
+                }
             }
+            if (size > Importer.MAX_BYTES) return@runCatching null
             val text = contentResolver.openInputStream(uri)?.let(Importer::readText) ?: return@runCatching null
             val ext = name.substringAfterLast('.', "").lowercase()
             val body = if (ext == "txt") Importer.plainTextToMarkdown(text) else text

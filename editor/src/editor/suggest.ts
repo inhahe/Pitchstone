@@ -5,6 +5,7 @@ import {Plugin, PluginKey, type EditorState} from 'prosemirror-state'
 import type {EditorView} from 'prosemirror-view'
 import {schema} from '../schema'
 import type {Mode} from './bridge'
+import {linkKey, linkName} from './links'
 import {settings} from './settings'
 
 const OPEN = /(?:^|[^\\!])\[\[([^[\]\n|#]*)$/
@@ -73,7 +74,7 @@ class Suggestions {
     }
     this.query = q
     const matches = rankTitles(this.titles(), q.text)
-    const exact = matches.some((t) => t.toLowerCase() === q.text.trim().toLowerCase())
+    const exact = matches.some((t) => linkKey(t) === linkKey(q.text))
     this.items = q.text.trim() && !exact ? [...matches, '\u0000' + q.text.trim()] : matches
     if (!this.items.length) {
       this.hide()
@@ -138,8 +139,17 @@ class Suggestions {
     const q = this.query
     if (!q) return
     const item = this.items[i]
-    const target = item.startsWith('\u0000') ? item.slice(1) : item
-    const node = schema.nodes.wikilink.create({target, alias: null, embed: false})
+    let target: string
+    let alias: string | null = null
+    if (item.startsWith('\u0000')) {
+      target = item.slice(1)
+    } else {
+      // A title with `#` or `|` in it cannot be written as is; the app finds the note by its
+      // link name, and the link keeps showing the real title where it can.
+      target = linkName(item)
+      if (target !== item && !/[[\]|\n\r]/.test(item)) alias = item
+    }
+    const node = schema.nodes.wikilink.create({target, alias, embed: false})
     const tr = this.view.state.tr.replaceWith(q.from, q.to, node)
     this.view.dispatch(tr.scrollIntoView())
     this.view.focus()

@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "3500b962c5deb037b413c7d601848259",
+    "identityHash": "4776cc3bae7b8a7125f728102d940e0e",
     "entities": [
       {
         "tableName": "notes",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `body` TEXT NOT NULL, `folder` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `pinned` INTEGER NOT NULL, `trashedAt` INTEGER, `searchText` TEXT NOT NULL, `snippet` TEXT NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `body` TEXT NOT NULL, `folder` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `pinned` INTEGER NOT NULL, `trashedAt` INTEGER, `searchText` TEXT NOT NULL, `snippet` TEXT NOT NULL, `linkedTitle` TEXT NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -64,6 +64,12 @@
           {
             "fieldPath": "snippet",
             "columnName": "snippet",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "linkedTitle",
+            "columnName": "linkedTitle",
             "affinity": "TEXT",
             "notNull": true
           }
@@ -302,7 +308,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3500b962c5deb037b413c7d601848259')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4776cc3bae7b8a7125f728102d940e0e')"
     ]
   }
 }

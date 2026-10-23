@@ -52,6 +52,45 @@ class NoteRepositoryTest {
     }
 
     @Test
+    fun `emptying a note keeps what it held, however recent the last version`() = runBlocking<Unit> {
+        val id = repo.create("T", "v1")
+        now += 1000
+        repo.save(id, "T", "v2") // v1 kept
+        now += 1000
+        repo.save(id, "T", "v3, written since") // too soon for a version
+        now += 1000
+        repo.save(id, "", "")
+        val bodies = repo.revisions(id).first().map { repo.revision(it.id)!!.body }
+        assertThat(bodies).containsExactly("v3, written since", "v1").inOrder()
+    }
+
+    @Test
+    fun `cutting a note by more than half keeps what it held`() = runBlocking<Unit> {
+        val id = repo.create("T", "x".repeat(100))
+        now += 1000
+        repo.save(id, "T", "x".repeat(101)) // first change: the original is kept
+        now += 1000
+        repo.save(id, "T", "x".repeat(60)) // too soon, and not cut by half
+        now += 1000
+        repo.save(id, "T", "x".repeat(20)) // cut by more than half
+        val lengths = repo.revisions(id).first().map { repo.revision(it.id)!!.body.length }
+        assertThat(lengths).containsExactly(60, 100).inOrder()
+    }
+
+    @Test
+    fun `only a note never written is pristine`() = runBlocking<Unit> {
+        val fresh = repo.create()
+        assertThat(repo.isPristine(fresh)).isTrue()
+        val written = repo.create()
+        now += 1000
+        repo.save(written, "T", "text")
+        now += 1000
+        repo.save(written, "", "")
+        assertThat(repo.isPristine(written)).isFalse()
+        assertThat(repo.isPristine(-1)).isFalse()
+    }
+
+    @Test
     fun `restoring a version keeps the current one`() = runBlocking<Unit> {
         val id = repo.create("T", "old")
         now += 1000
@@ -98,13 +137,52 @@ class NoteRepositoryTest {
     }
 
     @Test
-    fun `renaming a note updates links to it`() = runBlocking<Unit> {
+    fun `links resolve titles with a slash, folder paths and md names`() = runBlocking<Unit> {
+        val dated = repo.create("Meeting 10/23", "", "Work")
+        val deep = repo.create("Plan", "", "Work/Sub")
+        val top = repo.create("Top", "", "")
+        assertThat(repo.resolveLink("Meeting 10/23", "")!!.id).isEqualTo(dated)
+        assertThat(repo.resolveLink("Work/Meeting 10/23", "")!!.id).isEqualTo(dated)
+        assertThat(repo.resolveLink("Sub/Plan", "")!!.id).isEqualTo(deep)
+        assertThat(repo.resolveLink(" work / sub /plan.md#Goals", "")!!.id).isEqualTo(deep)
+        assertThat(repo.resolveLink("Home/Plan", "")).isNull()
+        assertThat(repo.resolveLink("ub/Plan", "")).isNull()
+        assertThat(repo.resolveLink("/Top", "")!!.id).isEqualTo(top)
+        assertThat(repo.resolveLink("/Plan", "")).isNull()
+    }
+
+    @Test
+    fun `renaming a note updates links to it once its editor is done`() = runBlocking<Unit> {
         val target = repo.create("Old name", "")
         val linking = repo.create("Index", "See [[Old name]] and [[old name#h|here]].")
         repo.save(target, "New name", "")
-        assertThat(repo.propagateRename(target, "Old name", "New name")).isEqualTo(1)
+        assertThat(repo.note(linking)!!.body).isEqualTo("See [[Old name]] and [[old name#h|here]].")
+        assertThat(repo.applyRename(target, updateLinks = true)).isEqualTo(1)
         assertThat(repo.note(linking)!!.body).isEqualTo("See [[New name]] and [[New name#h|here]].")
+        assertThat(repo.note(target)!!.linkedTitle).isEqualTo("New name")
         assertThat(repo.backlinks(target).map { it.id }).containsExactly(linking)
+        assertThat(repo.applyRename(target, updateLinks = true)).isEqualTo(0)
+    }
+
+    @Test
+    fun `a rename left pending is completed later, from the title links last pointed at`() = runBlocking<Unit> {
+        val target = repo.create("A", "")
+        val linking = repo.create("Index", "[[A]]")
+        repo.save(target, "B", "")
+        repo.save(target, "C", "") // renamed twice before anything updated the links
+        assertThat(repo.applyPendingRenames(updateLinks = true)).isEqualTo(1)
+        assertThat(repo.note(linking)!!.body).isEqualTo("[[C]]")
+        assertThat(repo.applyPendingRenames(updateLinks = true)).isEqualTo(0)
+    }
+
+    @Test
+    fun `with link updates off, a rename changes no note but is no longer pending`() = runBlocking<Unit> {
+        val target = repo.create("A", "")
+        val linking = repo.create("Index", "[[A]]")
+        repo.save(target, "B", "")
+        assertThat(repo.applyRename(target, updateLinks = false)).isEqualTo(0)
+        assertThat(repo.note(linking)!!.body).isEqualTo("[[A]]")
+        assertThat(repo.note(target)!!.linkedTitle).isEqualTo("B")
     }
 
     @Test
@@ -113,8 +191,39 @@ class NoteRepositoryTest {
         repo.create("Same", "the other one")
         val linking = repo.create("Index", "[[Same]]")
         repo.save(target, "Different", "")
-        assertThat(repo.propagateRename(target, "Same", "Different")).isEqualTo(0)
+        assertThat(repo.applyRename(target, updateLinks = true)).isEqualTo(0)
         assertThat(repo.note(linking)!!.body).isEqualTo("[[Same]]")
+    }
+
+    @Test
+    fun `renaming a note with a slash in its title keeps links working`() = runBlocking<Unit> {
+        val target = repo.create("Weekly meeting", "")
+        val linking = repo.create("Index", "[[Weekly meeting]]")
+        repo.save(target, "Weekly meeting 10/23", "")
+        repo.applyRename(target, updateLinks = true)
+        assertThat(repo.note(linking)!!.body).isEqualTo("[[Weekly meeting 10/23]]")
+        assertThat(repo.resolveLink("Weekly meeting 10/23", "")!!.id).isEqualTo(target)
+        assertThat(repo.backlinks(target).map { it.id }).containsExactly(linking)
+    }
+
+    @Test
+    fun `md links count as backlinks and follow renames`() = runBlocking<Unit> {
+        val target = repo.create("Plan", "")
+        val linking = repo.create("Index", "[[Plan.md]]")
+        assertThat(repo.backlinks(target).map { it.id }).containsExactly(linking)
+        repo.save(target, "Roadmap", "")
+        repo.applyRename(target, updateLinks = true)
+        assertThat(repo.note(linking)!!.body).isEqualTo("[[Roadmap.md]]")
+    }
+
+    @Test
+    fun `a save expecting another body is refused, and nothing changes`() = runBlocking<Unit> {
+        val id = repo.create("T", "typed in the editor")
+        assertThat(repo.save(id, "T", "rewritten", expectedBody = "read earlier"))
+            .isEqualTo(NoteRepository.SaveResult.CONFLICT)
+        assertThat(repo.note(id)!!.body).isEqualTo("typed in the editor")
+        assertThat(repo.save(id, "T", "rewritten", expectedBody = "typed in the editor"))
+            .isEqualTo(NoteRepository.SaveResult.SAVED)
     }
 
     @Test
@@ -140,6 +249,42 @@ class NoteRepositoryTest {
         assertThat(repo.folders().first()).containsExactly("Other")
         repo.restore(listOf(a))
         assertThat(repo.folders().first()).containsExactly("Other", "Work", "Work/Sub")
+    }
+
+    @Test
+    fun `folders differing only in case are different folders`() = runBlocking<Unit> {
+        val upper = repo.create("A", "", "Work")
+        val lower = repo.create("B", "", "work/Sub")
+        assertThat(repo.countNotesIn("Work")).isEqualTo(1)
+        assertThat(repo.deleteFolder("Work")).isEqualTo(1)
+        assertThat(repo.note(upper)!!.trashedAt).isNotNull()
+        assertThat(repo.note(lower)!!.trashedAt).isNull()
+        repo.renameFolder("work", "Jobs")
+        assertThat(repo.note(lower)!!.folder).isEqualTo("Jobs/Sub")
+        assertThat(repo.folders().first()).containsExactly("Jobs", "Jobs/Sub")
+    }
+
+    @Test
+    fun `renaming a folder whose name has characters beyond 16 bits keeps the path`() = runBlocking<Unit> {
+        val folder = "\uD83D\uDCDD Notes" // an emoji: two UTF-16 units, one character to SQLite
+        val sub = repo.create("A", "", "$folder/Sub")
+        repo.renameFolder(folder, "Archive")
+        assertThat(repo.note(sub)!!.folder).isEqualTo("Archive/Sub")
+        assertThat(repo.folders().first()).containsExactly("Archive", "Archive/Sub")
+    }
+
+    @Test
+    fun `bulk actions handle more notes than SQLite allows variables`() = runBlocking<Unit> {
+        // Android 8 to 11 allow 999 variables per statement. (The JVM's SQLite allows more, so
+        // this checks that every chunk is applied, not the limit itself.)
+        val ids = (1..1200).map { repo.create("N$it", "") }
+        repo.moveToTrash(ids)
+        assertThat(repo.trash().first()).hasSize(1200)
+        repo.restore(ids)
+        repo.move(ids, "Box")
+        assertThat(repo.notes(ids).map { it.folder }.toSet()).containsExactly("Box")
+        repo.deleteForever(ids)
+        assertThat(repo.notes(ids)).isEmpty()
     }
 
     @Test

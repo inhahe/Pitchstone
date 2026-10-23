@@ -15,7 +15,7 @@ export type OutMessage =
   | {type: 'editWikilink'; target: string; alias: string | null}
   | {type: 'modeChanged'; mode: Mode}
   | {type: 'findResult'; count: number; current: number}
-  | {type: 'warning'; code: 'parseFailed' | 'inexact' | 'sourceParseFailed'; message: string}
+  | {type: 'warning'; code: 'parseFailed' | 'inexact' | 'sourceParseFailed' | 'serializeFailed'; message: string}
 
 export type Mode = 'edit' | 'read' | 'source'
 

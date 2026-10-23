@@ -1,8 +1,8 @@
 // Editing commands behind the toolbar and the keymap.
 
-import {chainCommands, exitCode, lift, setBlockType, toggleMark, wrapIn} from 'prosemirror-commands'
+import {chainCommands, exitCode, lift, setBlockType, wrapIn} from 'prosemirror-commands'
 import {redo, undo} from 'prosemirror-history'
-import {Fragment, type Mark, type MarkType, type Node, type NodeType, type ResolvedPos} from 'prosemirror-model'
+import {Fragment, type Mark, type Node, type NodeType, type ResolvedPos} from 'prosemirror-model'
 import {liftListItem, sinkListItem, splitListItem, wrapInList} from 'prosemirror-schema-list'
 import {type Command, type EditorState, NodeSelection, TextSelection, type Transaction} from 'prosemirror-state'
 import {
@@ -16,6 +16,7 @@ import {
   selectedRect,
   TableMap,
 } from 'prosemirror-tables'
+import {atomMarkdown} from '../markdown/serialize'
 import {schema} from '../schema'
 
 const {nodes, marks} = schema
@@ -32,10 +33,6 @@ export function findAncestor($pos: ResolvedPos, pred: (n: Node) => boolean): {no
 }
 
 const isList = (n: Node) => n.type === nodes.bullet_list || n.type === nodes.ordered_list
-
-export function markCommand(type: MarkType): Command {
-  return toggleMark(type)
-}
 
 /** Replaces hard breaks in the selected textblocks with spaces (for single-line blocks). */
 function flattenBreaks(tr: Transaction, from: number, to: number): void {
@@ -146,9 +143,30 @@ export const blockquoteCommand: Command = (state, dispatch) => {
   return wrapIn(nodes.blockquote)(state, dispatch)
 }
 
+/** Whether `node` is an inline atom with markdown of its own (not text, not a line break). */
+const isMarkdownAtom = (node: Node) => node.isInline && node.isAtom && !node.isText && node.type !== nodes.hard_break
+
+/**
+ * Replaces the inline atoms (links to notes, images, footnote references, inline HTML) of the
+ * textblocks touching `from`..`to` with their markdown, as text: a code block holds only text,
+ * and the atoms would otherwise vanish.
+ */
+function atomsToText(tr: Transaction, from: number, to: number): void {
+  const atoms: {pos: number; node: Node}[] = []
+  tr.doc.nodesBetween(from, to, (node, pos) => {
+    if (!node.isTextblock) return true
+    node.forEach((child, offset) => {
+      if (isMarkdownAtom(child)) atoms.push({pos: pos + 1 + offset, node: child})
+    })
+    return false
+  })
+  for (const {pos, node} of atoms.reverse()) tr.replaceWith(pos, pos + node.nodeSize, schema.text(atomMarkdown(node), node.marks))
+}
+
 /**
  * Toggles a code block. Several selected paragraphs become one code block, one line each;
- * leaving a code block turns its lines back into one paragraph with line breaks.
+ * leaving a code block turns its lines back into one paragraph with line breaks. Formatting
+ * is dropped; links to notes, images and inline HTML stay, as their markdown.
  */
 export const codeBlockCommand: Command = (state, dispatch) => {
   const {$from, $to} = state.selection
@@ -179,12 +197,21 @@ export const codeBlockCommand: Command = (state, dispatch) => {
     }
     let line = ''
     child.forEach((n) => {
-      line += n.isText ? n.text : n.type === nodes.hard_break ? '\n' : n.textContent
+      line += n.isText ? n.text : n.type === nodes.hard_break ? '\n' : isMarkdownAtom(n) ? atomMarkdown(n) : n.textContent
     })
     lines.push(line)
   }
   if (!ok || !range.parent.canReplaceWith(range.startIndex, range.endIndex, nodes.code_block)) {
-    return setBlockType(nodes.code_block)(state, dispatch)
+    // Each selected textblock becomes a code block of its own.
+    if (!setBlockType(nodes.code_block)(state)) return false
+    if (dispatch) {
+      const tr = state.tr
+      const {from, to} = state.selection
+      atomsToText(tr, from, to)
+      tr.setBlockType(tr.mapping.map(from, -1), tr.mapping.map(to), nodes.code_block)
+      dispatch(tr.scrollIntoView())
+    }
+    return true
   }
   if (dispatch) {
     const text = lines.join('\n')

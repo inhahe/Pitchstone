@@ -107,6 +107,41 @@ fun ConfirmDialog(
 }
 
 /**
+ * Asks for the name of a folder below [parent] and returns its path. A name that matches one of
+ * the [existing] paths, ignoring case, is refused: exported, the two would share one directory.
+ * [renaming] is the path of the folder being renamed, which does not count as taken.
+ */
+@Composable
+fun FolderNameDialog(
+    title: String,
+    parent: String,
+    existing: List<String>,
+    confirmLabel: String,
+    initial: String = "",
+    renaming: String? = null,
+    onDismiss: () -> Unit,
+    onConfirm: (path: String) -> Unit,
+) {
+    TextInputDialog(
+        title = title,
+        label = "Folder name",
+        initial = initial,
+        confirmLabel = confirmLabel,
+        validate = { name ->
+            val clean = FolderPaths.cleanName(name)
+            val target = FolderPaths.child(parent, clean)
+            when {
+                clean.isEmpty() -> "Enter a name"
+                existing.any { it != renaming && it.equals(target, ignoreCase = true) } -> "That folder exists"
+                else -> null
+            }
+        },
+        onDismiss = onDismiss,
+        onConfirm = { onConfirm(FolderPaths.child(parent, FolderPaths.cleanName(it))) },
+    )
+}
+
+/**
  * Picks a folder among [folders] (paths), the top level, or a new one. [current] is marked.
  */
 @Composable
@@ -120,20 +155,13 @@ fun FolderPickerDialog(
     var creating by remember { mutableStateOf(false) }
     var parentForNew by remember { mutableStateOf("") }
     if (creating) {
-        TextInputDialog(
+        FolderNameDialog(
             title = if (parentForNew.isEmpty()) "New folder" else "New folder in ${FolderPaths.name(parentForNew)}",
-            label = "Folder name",
+            parent = parentForNew,
+            existing = folders,
             confirmLabel = "Create",
-            validate = { name ->
-                val clean = FolderPaths.cleanName(name)
-                when {
-                    clean.isEmpty() -> "Enter a name"
-                    FolderPaths.child(parentForNew, clean) in folders -> "That folder exists"
-                    else -> null
-                }
-            },
             onDismiss = { creating = false },
-            onConfirm = { onPick(FolderPaths.child(parentForNew, FolderPaths.cleanName(it))) },
+            onConfirm = onPick,
         )
         return
     }

@@ -65,7 +65,8 @@ parsed back; blocks that still differ are re-rendered at level 1.
 
 So a typed `*`, `#`, `[[`, `- ` is always literal: with markdown shortcuts off nothing turns it
 into formatting, and the serializer escapes whatever the parser would otherwise read as
-markup. Tests: `test/roundtrip.test.ts`, all 652 CommonMark spec examples
+markup. A task item keeps its first paragraph even when empty, since the checkbox is written
+on it (`- [ ]` over a nested list). Tests: `test/roundtrip.test.ts`, all 652 CommonMark spec examples
 (`test/spec.test.ts`), and a fuzzer (`test/fuzz.test.ts`, `FUZZ_SEED`/`FUZZ_CASES`) that
 generates documents rich in markdown punctuation, nested containers, tables, footnotes,
 wikilinks and HTML, and shrinks any failure to a minimal document. 800,000 generated
@@ -85,19 +86,34 @@ documents pass.
 - **Plugins**: decorations (tags, bare URLs, missing-note links, find matches, placeholder),
   structure fix-ups (table header row, task items start with a paragraph), toolbar state
   reports, link bubble, `[[` note suggestions.
+- **Links** (`links.ts`): which notes exist is decided by the app's own rules (see Data): the
+  app sends every note's lookup keys, and `noteExists` matches a link's whole name, then its
+  `folder/note` path key. A picked suggestion is written as the title's link name (no `#|^[]`),
+  with the title as alias when they differ. `anchorPosition` finds the heading (last part of
+  `#A#B`, ignoring `#|^:%[]`) or `^block` a link's anchor names, for `scrollToAnchor`.
+- **Code blocks**: making one from paragraphs keeps links to notes, images, footnote
+  references and inline HTML as their markdown (`atomMarkdown`); other formatting is dropped.
+- **Old WebViews**: the bundle targets Chrome 90. esbuild lowers syntax but adds no polyfills,
+  so newer APIs must not be used; the e2e tests delete the post-Chrome-90 ones (`structuredClone`,
+  `Array.prototype.at`, ...) before the page loads, and CSS `color-mix` has a plain fallback.
 - The page never navigates; anchors are prevented, the app opens links.
 
 ### Bridge (app <-> page)
 
 The app calls `window.inkdown.*` with JSON-string arguments (`EditorWebView.call`):
-`load(payload)`, `setSettings`, `setNoteTitles`, `setMode`, `command(name, args)`,
-`flush()` (returns the pending change synchronously as JSON and marks it reported), `focus`,
-`find`/`findNext`/`findPrevious`.
+`load(payload)`, `setSettings`, `setNotes({titles, keys})`, `setMode`, `command(name, args)`,
+`flush()` (returns the pending change synchronously as JSON and marks it reported; if the
+change cannot be turned into markdown it stays pending and the result carries `error`),
+`focus`, `scrollToAnchor`, `find`/`findNext`/`findPrevious`.
+
+If `load` cannot parse a note, it opens in source mode over an empty stand-in document that is
+never shown or saved: leaving source mode always re-parses, and stays in source mode on failure.
 
 The page posts JSON to `InkdownAndroid.postMessage` (`bridge.ts` `OutMessage`): `ready`,
 `changed {markdown, title, exact, seq}` (400 ms after the last edit, on blur, on page hide),
 `state {toolbar state}`, `openLink`, `openNote`, `openTag`, `editLink`, `editWikilink`,
-`modeChanged`, `findResult`, `warning`.
+`modeChanged`, `findResult`, `warning` (`parseFailed`, `sourceParseFailed`, `serializeFailed`
+once per failing streak, `inexact`).
 
 ## Saving
 
@@ -110,8 +126,19 @@ pending change synchronously, saves, then continues. The view model also observe
 the database: a change that is none of `saved`/`inFlight`/`content` came from elsewhere
 (restored version, link rename) and is reloaded into the page.
 
-Closing a note deletes it if it was created empty and is still empty, moves it to the trash
-if it was emptied by hand, and otherwise propagates a title change to links in other notes.
+Leaving a note (`close`) requires everything to be saved: if the save failed or the page could
+not produce markdown, the note stays open with a dialog (try again, leave anyway, stay and copy
+the text). Every session ends once in `finishSession`, from `close` or from `onCleared` when
+the screen is removed some other way (a tag tapped further up the stack): an empty note is
+deleted only if it never held text in this session and was never written
+(`NoteRepository.isPristine`), and otherwise goes to the trash with Undo.
+
+Renames: each note records `linkedTitle`, the title its incoming links were last updated for.
+`finishSession` calls `NoteRepository.applyRename`, which rewrites every note linking to the
+old title (each with a compare-and-set save, retried, so a racing editor save is never
+overwritten) and then records the new title; renames left pending (the process died) are
+completed at start-up (`applyPendingRenames`). Links are left alone when the setting is off or
+another note still has the old name.
 
 The WebView is recreated if its renderer dies (`onRenderProcessGone`); the activity handles
 configuration changes itself, so rotation or theme changes keep the WebView and its undo
@@ -128,11 +155,27 @@ Room database `inkdown.db` (WAL), schema exported to `app/schemas`:
 - `note_tags` (key, display) and `note_links` (target key): the derived index, rewritten on
   every save from `NoteIndexer` (commonmark-java).
 - `revisions`: earlier versions; a revision of the replaced content is written when the last
-  one is older than 10 minutes; at most 60 per note, older than 90 days pruned beyond 10.
+  one is older than 10 minutes, and always when a save empties the note or cuts it by more
+  than half (so a deletion can be undone); at most 60 per note, older than 90 days pruned
+  beyond 10.
+
+Folder trees are matched in SQL by `folder = :old OR substr(folder, 1, length(:old) + 1) =
+:old || '/'`: case-sensitive (unlike `LIKE`) and counted in SQLite's own characters (a Kotlin
+length counts UTF-16 units). Bulk actions on note ids run in chunks of 500, since SQLite before
+3.32 (Android 8 to 11) allows 999 variables per statement.
 
 Search is substring AND over words on `searchText` (LIKE with escaped wildcards). Notes in the
-trash for 30 days are purged at start-up. Wikilinks resolve by `WikiLinks.key` (title without
-`[]|#^`, lower-cased): same folder first, then top level, then most recently edited.
+trash for 30 days are purged at start-up.
+
+Wikilinks resolve by `WikiLinks.key` (title without `[]|#^`, spaces collapsed, lower-cased),
+`.md` ignored: first a note whose whole title matches (titles may contain `/`), then a
+`folder/note` path (`WikiLinks.pathKey`) among each note's `lookupKeys` (title, and
+`tail-of-folder/title` for every tail of its folder path, `/title` at the top level). Among
+several: same folder, then top level, then most recently edited. A link is indexed
+(`note_links`) under its whole name and the part after each `/`, so backlinks and renames find
+it whichever note it means. Following a link to a missing note creates it (`folder/note` in
+that folder, as Obsidian does); links to files other than `.md` are refused. The editor's
+missing-link marks use the same keys (`editor/src/editor/links.ts`).
 
 Settings live in DataStore (`Settings.kt`).
 
@@ -162,14 +205,16 @@ a YAML code block. `FileNames` makes names valid on FAT/NTFS/ext4, cut at a char
 within 200 bytes.
 
 `ExportWriter` writes to a `DocumentDir` (`SafDir` over a Storage Access Framework tree, or
-`FileDir` for tests): names it wrote itself are never overwritten (duplicates get " (2)"),
+`FileDir` for tests): folders are matched ignoring case (as on FAT/exFAT), names it wrote
+itself are never overwritten (duplicates get " (2)"),
 existing files follow the chosen policy, replacing opens with `"wt"` (truncate) and falls back
 to delete-and-create, and `.md` is created as `application/octet-stream` so providers do not
 append an extension.
 
 `Importer` walks a tree (skipping hidden folders) or picked files, reads UTF-8 with or without
 BOM, converts plain text to markdown that displays it literally (`plainTextToMarkdown`), and
-skips notes already present unchanged.
+skips notes already present unchanged. A file shared or opened from another app is read only
+from a `content://` URI and only up to `Importer.MAX_BYTES`.
 
 ## Sharing
 

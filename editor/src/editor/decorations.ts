@@ -5,6 +5,7 @@ import type {Node} from 'prosemirror-model'
 import {Plugin, PluginKey, type EditorState} from 'prosemirror-state'
 import {Decoration, DecorationSet} from 'prosemirror-view'
 import {schema} from '../schema'
+import {noteExists} from './links'
 
 const {nodes, marks} = schema
 
@@ -15,8 +16,8 @@ export const URL_RE = /\bhttps?:\/\/[^\s<>"'`]*[^\s<>"'`.,;:!?)\]}]/g
 
 export interface DecorationState {
   decos: DecorationSet
-  /** Lower-cased titles (and folder/title paths) of existing notes. */
-  titles: Set<string>
+  /** The app's lookup keys of every note (see noteExists). */
+  keys: Set<string>
   query: string
   current: number
   matches: {from: number; to: number}[]
@@ -24,24 +25,25 @@ export interface DecorationState {
 
 export const decorationsKey = new PluginKey<DecorationState>('inkdown-decorations')
 
-type Meta = {titles?: string[]; query?: string; current?: number}
+type Meta = {keys?: string[]; query?: string; current?: number}
 
-/** The note a wikilink target points at: the part before any `#heading` or `#^block`. */
-export function wikilinkNote(target: string): string {
-  const hash = target.indexOf('#')
-  return (hash >= 0 ? target.slice(0, hash) : target).trim()
-}
-
-function noteExists(titles: Set<string>, target: string): boolean {
-  const name = wikilinkNote(target).toLowerCase()
-  if (!name) return true // [[#heading]] links within the note
-  return titles.has(name) || titles.has(name.replace(/\.md$/, ''))
+/**
+ * Lower-cases `s` one UTF-16 unit at a time, leaving a character whose lower case is longer
+ * (`İ`) as it is, so that positions in the result are positions in `s`.
+ */
+function foldCase(s: string): string {
+  let out = ''
+  for (const c of s.split('')) {
+    const lower = c.toLowerCase()
+    out += lower.length === 1 ? lower : c
+  }
+  return out
 }
 
 function findMatches(doc: Node, query: string): {from: number; to: number}[] {
   const out: {from: number; to: number}[] = []
   if (!query) return out
-  const q = query.toLowerCase()
+  const q = foldCase(query)
   doc.descendants((node, pos) => {
     if (!node.isTextblock) return true
     let text = ''
@@ -55,7 +57,7 @@ function findMatches(doc: Node, query: string): {from: number; to: number}[] {
         text += '￼'
       }
     })
-    const lower = text.toLowerCase()
+    const lower = foldCase(text)
     let i = lower.indexOf(q)
     while (i >= 0) {
       out.push({from: offsets[i], to: offsets[i + q.length - 1] + 1})
@@ -66,11 +68,11 @@ function findMatches(doc: Node, query: string): {from: number; to: number}[] {
   return out
 }
 
-function build(doc: Node, titles: Set<string>, matches: {from: number; to: number}[], current: number): DecorationSet {
+function build(doc: Node, keys: Set<string>, matches: {from: number; to: number}[], current: number): DecorationSet {
   const decos: Decoration[] = []
   doc.descendants((node, pos) => {
     if (node.type === nodes.code_block || node.type === nodes.frontmatter) return false
-    if (node.type === nodes.wikilink && !noteExists(titles, node.attrs.target)) {
+    if (node.type === nodes.wikilink && !noteExists(keys, node.attrs.target)) {
       decos.push(Decoration.node(pos, pos + node.nodeSize, {class: 'missing'}))
     }
     if (!node.isText) return true
@@ -104,18 +106,18 @@ export function decorationsPlugin(): Plugin<DecorationState> {
     key: decorationsKey,
     state: {
       init(_config, state) {
-        return {decos: build(state.doc, new Set(), [], 0), titles: new Set(), query: '', current: 0, matches: []}
+        return {decos: build(state.doc, new Set(), [], 0), keys: new Set(), query: '', current: 0, matches: []}
       },
       apply(tr, prev, _old, state) {
         const meta = tr.getMeta(decorationsKey) as Meta | undefined
         if (!tr.docChanged && !meta) return prev
-        const titles = meta?.titles ? new Set(meta.titles.map((t) => t.toLowerCase())) : prev.titles
+        const keys = meta?.keys ? new Set(meta.keys) : prev.keys
         const query = meta?.query ?? prev.query
         const matches = findMatches(state.doc, query)
         let current = meta?.current ?? (meta?.query !== undefined ? 0 : prev.current)
         if (matches.length) current = ((current % matches.length) + matches.length) % matches.length
         else current = 0
-        return {decos: build(state.doc, titles, matches, current), titles, query, current, matches}
+        return {decos: build(state.doc, keys, matches, current), keys, query, current, matches}
       },
     },
     props: {

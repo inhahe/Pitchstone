@@ -1,5 +1,6 @@
 package app.inkdown.markdown
 
+import app.inkdown.data.FolderPaths
 import org.commonmark.node.CustomNode
 
 /**
@@ -101,4 +102,46 @@ object WikiLinks {
 
     /** The lower-cased key under which a note name is indexed and looked up. */
     fun key(name: String): String = linkName(name).lowercase()
+
+    /**
+     * A link target as typed in the link dialog: brackets, `|` and line breaks would end the
+     * link, so they go; `#heading` and `#^block` parts stay.
+     */
+    fun cleanTarget(target: String): String = target.replace(Regex("[\\[\\]|\\r\\n]"), "").trim()
+
+    /**
+     * The title keys a link's note name ([WikiLinkMatch.noteName]) may refer to, most specific
+     * first: the whole name, then the part after each `/`. Titles may contain `/` themselves,
+     * so `Work/Meeting 10/23` may be note "Meeting 10/23" in folder Work, or note "23" in
+     * Work/Meeting 10. A `.md` suffix, as in links from other apps, is ignored.
+     */
+    fun targetKeys(noteName: String): List<String> {
+        val name = noteName.trim().let { if (it.endsWith(".md", ignoreCase = true)) it.dropLast(3) else it }
+        val tails = name.indices.filter { name[it] == '/' }.map { name.substring(it + 1) }
+        return (listOf(name) + tails).map(::key).filter { it.isNotEmpty() }.distinct()
+    }
+
+    /**
+     * The keys under which a note with [title] in [folder] can be linked: its title's key, then
+     * `folder/title` for every tail of its folder path (`work/sub/plan`, `sub/plan`), or
+     * `/title` for a note at the top level. A link's [pathKey] is looked up among these.
+     */
+    fun lookupKeys(title: String, folder: String): List<String> {
+        val k = key(title)
+        if (k.isEmpty()) return emptyList()
+        val parts = FolderPaths.normalize(folder).split('/').filter { it.isNotEmpty() }
+        val tails = if (parts.isEmpty()) listOf("") else parts.indices.map { parts.subList(it, parts.size).joinToString("/") }
+        return listOf(k) + tails.map { it.lowercase() + "/" + k }
+    }
+
+    /**
+     * The key of a `folder/note` link name (without `#heading` or `.md`), to look up among
+     * [lookupKeys]; null if the name has no folder part.
+     */
+    fun pathKey(noteName: String): String? {
+        if (!noteName.contains('/')) return null
+        val base = key(noteName.substringAfterLast('/'))
+        if (base.isEmpty()) return null
+        return FolderPaths.normalize(noteName.substringBeforeLast('/')).lowercase() + "/" + base
+    }
 }

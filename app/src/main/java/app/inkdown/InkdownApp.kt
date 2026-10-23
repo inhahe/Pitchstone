@@ -36,7 +36,11 @@ class AppContainer(context: Context) {
     val listRequests = MutableStateFlow<ListRequest?>(null)
 
     fun startMaintenance() {
-        appScope.launch { repository.purgeOldTrash() }
+        appScope.launch {
+            repository.purgeOldTrash()
+            // Renames the app was stopped in the middle of (see NoteEntity.linkedTitle).
+            repository.applyPendingRenames(settings.current().updateLinksOnRename)
+        }
     }
 }
 

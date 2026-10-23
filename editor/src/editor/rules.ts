@@ -184,6 +184,13 @@ export function enterShortcut(state: EditorState, dispatch?: (tr: Transaction) =
   if (!$cursor) return false
   const para = $cursor.parent
   if (para.type !== nodes.paragraph || $cursor.parentOffset !== para.content.size) return false
+  // Only plain typed text: textContent leaves out links to notes and other atoms, and
+  // formatted dashes or backticks are not markdown syntax.
+  let plain = true
+  para.forEach((n) => {
+    if (!n.isText || n.marks.length) plain = false
+  })
+  if (!plain) return false
   const text = para.textContent
   const start = $cursor.before()
   const end = $cursor.after()

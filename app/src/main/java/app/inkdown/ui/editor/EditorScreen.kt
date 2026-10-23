@@ -31,7 +31,10 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -70,6 +73,7 @@ import app.inkdown.export.ExportNote
 import app.inkdown.export.FileNames
 import app.inkdown.ui.common.ConfirmDialog
 import app.inkdown.ui.common.FolderPickerDialog
+import app.inkdown.ui.common.Urls
 import app.inkdown.ui.export.ExportDialog
 import app.inkdown.ui.export.ExportSource
 import app.inkdown.ui.share.ShareSheet
@@ -82,14 +86,15 @@ import kotlinx.serialization.json.JsonObject
 @Composable
 fun EditorScreen(
     noteId: Long,
+    anchor: String?,
     onBack: () -> Unit,
-    onOpenNote: (Long) -> Unit,
+    onOpenNote: (Long, String?) -> Unit,
     onShowTag: (String) -> Unit,
     onHistory: (Long) -> Unit,
 ) {
     val context = LocalContext.current
     val container = context.container
-    val vm: EditorViewModel = viewModel(key = "editor-$noteId") { EditorViewModel(noteId, container) }
+    val vm: EditorViewModel = viewModel(key = "editor-$noteId") { EditorViewModel(noteId, anchor, container) }
     val state by vm.state.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val titles by vm.noteTitles.collectAsStateWithLifecycle()
@@ -108,7 +113,7 @@ fun EditorScreen(
     fun message(text: String) = scope.launch { snackbar.showSnackbar(text) }
 
     fun openUrl(url: String) {
-        val uri = Uri.parse(if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(url)) url else "https://$url")
+        val uri = Uri.parse(if (Urls.hasScheme(url)) url else "https://$url")
         if (url.startsWith("#") || url.isBlank()) {
             message("That link points inside a note")
             return
@@ -124,7 +129,7 @@ fun EditorScreen(
         vm.events.collect { event ->
             when (event) {
                 is EditorEvent.OpenUrl -> openUrl(event.url)
-                is EditorEvent.OpenNote -> onOpenNote(event.id)
+                is EditorEvent.OpenNote -> onOpenNote(event.id, event.anchor)
                 is EditorEvent.ShowTag -> onShowTag(event.tag)
                 is EditorEvent.Message -> message(event.text)
                 EditorEvent.Close -> onBack()
@@ -224,7 +229,7 @@ fun EditorScreen(
                                 leadingIcon = { Icon(Icons.Outlined.Link, null) },
                                 onClick = {
                                     menuOpen = false
-                                    vm.flushThen { showBacklinks = true }
+                                    vm.flushThenRun { showBacklinks = true }
                                 },
                             )
                             DropdownMenuItem(
@@ -232,7 +237,7 @@ fun EditorScreen(
                                 leadingIcon = { Icon(Icons.Outlined.History, null) },
                                 onClick = {
                                     menuOpen = false
-                                    vm.flushThen { onHistory(noteId) }
+                                    vm.flushThenRun { onHistory(noteId) }
                                 },
                             )
                             DropdownMenuItem(
@@ -240,7 +245,7 @@ fun EditorScreen(
                                 leadingIcon = { Icon(Icons.Outlined.Info, null) },
                                 onClick = {
                                     menuOpen = false
-                                    vm.flushThen { showInfo = true }
+                                    vm.flushThenRun { showInfo = true }
                                 },
                             )
                             HorizontalDivider()
@@ -300,10 +305,29 @@ fun EditorScreen(
         }
     }
     if (showInfo) NoteInfoDialog(vm) { showInfo = false }
+    state.leaveBlocked?.let { why ->
+        AlertDialog(
+            onDismissRequest = vm::dismissLeaveBlocked,
+            title = { Text("Not saved") },
+            text = { Text("$why\n\nStay to copy your text somewhere safe, try again, or leave and lose the unsaved changes.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.dismissLeaveBlocked()
+                    vm.close(onBack)
+                }) { Text("Try again") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { vm.leaveAnyway(onBack) }) { Text("Leave anyway", color = MaterialTheme.colorScheme.error) }
+                    TextButton(onClick = vm::dismissLeaveBlocked) { Text("Stay") }
+                }
+            },
+        )
+    }
     if (showBacklinks) {
         BacklinksDialog(vm, onDismiss = { showBacklinks = false }) { id ->
             showBacklinks = false
-            onOpenNote(id)
+            onOpenNote(id, null)
         }
     }
 }

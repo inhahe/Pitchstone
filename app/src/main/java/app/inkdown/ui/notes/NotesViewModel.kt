@@ -34,26 +34,32 @@ sealed interface Scope {
 class NotesViewModel(private val container: AppContainer) : ViewModel() {
     private val repo = container.repository
 
+    /**
+     * The list's queries run only while the list is on screen (and for a few seconds after, to
+     * ride out a rotation): with an editor open, every autosave would otherwise re-run them.
+     */
+    private val whileShown = SharingStarted.WhileSubscribed(5_000)
+
     val scope = MutableStateFlow<Scope>(Scope.All)
     val searching = MutableStateFlow(false)
     val query = MutableStateFlow("")
     val selection = MutableStateFlow<Set<Long>>(emptySet())
 
-    val settings: StateFlow<AppSettings> = container.settings.settings.stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
-    val folders: StateFlow<List<String>> = repo.folders().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val tags: StateFlow<List<TagCount>> = repo.tags().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val trashCount: StateFlow<Int> = repo.trash().map { it.size }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    val settings: StateFlow<AppSettings> = container.settings.settings.stateIn(viewModelScope, whileShown, AppSettings())
+    val folders: StateFlow<List<String>> = repo.folders().stateIn(viewModelScope, whileShown, emptyList())
+    val tags: StateFlow<List<TagCount>> = repo.tags().stateIn(viewModelScope, whileShown, emptyList())
+    val trashCount: StateFlow<Int> = repo.trash().map { it.size }.stateIn(viewModelScope, whileShown, 0)
 
-    private val all: StateFlow<List<NoteSummary>> = repo.summaries().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    private val all: StateFlow<List<NoteSummary>> = repo.summaries().stateIn(viewModelScope, whileShown, emptyList())
 
     /** Notes per folder, counting those in subfolders too. */
     val folderCounts: StateFlow<Map<String, Int>> = all.map { notes ->
         val counts = HashMap<String, Int>()
         for (n in notes) for (f in FolderPaths.withAncestors(n.folder)) counts[f] = (counts[f] ?: 0) + 1
         counts
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+    }.stateIn(viewModelScope, whileShown, emptyMap())
 
-    val totalCount: StateFlow<Int> = all.map { it.size }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    val totalCount: StateFlow<Int> = all.map { it.size }.stateIn(viewModelScope, whileShown, 0)
 
     val notes: StateFlow<List<NoteSummary>> = combine(scope, searching, query) { s, searching, q -> Triple(s, searching, q) }
         .flatMapLatest { (s, searching, q) ->
@@ -65,11 +71,11 @@ class NotesViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
         .combine(settings) { list, s -> sorted(list, s.sortOrder) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        .stateIn(viewModelScope, whileShown, emptyList())
 
     val subfolders: StateFlow<List<String>> = combine(scope, searching, folders) { s, searching, f ->
         if (!searching && s is Scope.Folder) f.filter { it.isNotEmpty() && FolderPaths.parent(it) == s.path } else emptyList()
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    }.stateIn(viewModelScope, whileShown, emptyList())
 
     init {
         viewModelScope.launch {
@@ -170,8 +176,8 @@ class NotesViewModel(private val container: AppContainer) : ViewModel() {
 
     fun createFolder(path: String) = viewModelScope.launch { repo.createFolder(path) }
 
-    fun renameFolder(path: String, newName: String) = viewModelScope.launch {
-        val target = FolderPaths.child(FolderPaths.parent(path), newName)
+    /** Renames the folder [path] to [target], a full path. */
+    fun renameFolder(path: String, target: String) = viewModelScope.launch {
         repo.renameFolder(path, target)
         val s = scope.value
         if (s is Scope.Folder && FolderPaths.isWithin(s.path, path)) scope.value = Scope.Folder(target + s.path.substring(path.length))
@@ -188,23 +194,13 @@ class NotesViewModel(private val container: AppContainer) : ViewModel() {
 
     suspend fun countNotesIn(path: String): Int = repo.countNotesIn(path)
 
-    /** The notes [ids], or all notes in the current scope if null, ready for export. */
-    suspend fun exportNotes(ids: Collection<Long>?): List<ExportNote> {
-        val notes = if (ids != null) repo.notes(ids) else repo.allNotes()
-        val wanted = if (ids != null) notes else when (val s = scope.value) {
-            is Scope.Folder -> notes.filter { FolderPaths.isWithin(it.folder, s.path) || s.path.isEmpty() }
-            is Scope.Tag -> {
-                val tagged = this.notes.value.map { it.id }.toSet()
-                notes.filter { it.id in tagged }
-            }
-            Scope.All -> notes
-        }
-        return wanted.sortedWith(compareBy({ it.folder.lowercase() }, { it.title.lowercase() })).map {
+    /** The notes [ids] ready for export, in folder and title order. */
+    suspend fun exportNotes(ids: Collection<Long>): List<ExportNote> = forExport(repo.notes(ids))
+
+    suspend fun allNotesForExport(): List<ExportNote> = forExport(repo.allNotes())
+
+    private suspend fun forExport(notes: List<app.inkdown.data.NoteEntity>): List<ExportNote> =
+        notes.sortedWith(compareBy({ it.folder.lowercase() }, { it.title.lowercase() })).map {
             ExportNote(it.title, it.body, it.folder, it.createdAt, it.updatedAt, repo.tagsOf(it.id))
         }
-    }
-
-    suspend fun allNotesForExport(): List<ExportNote> = repo.allNotes()
-        .sortedWith(compareBy({ it.folder.lowercase() }, { it.title.lowercase() }))
-        .map { ExportNote(it.title, it.body, it.folder, it.createdAt, it.updatedAt, repo.tagsOf(it.id)) }
 }

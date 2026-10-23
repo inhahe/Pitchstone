@@ -29,6 +29,12 @@ data class NoteEntity(
     val searchText: String,
     /** The start of the note's plain text, for the note list. */
     val snippet: String,
+    /**
+     * The title that [[links]] in other notes were last updated for. While it differs from
+     * [title], the note has been renamed and links to it still use the old name; kept in the
+     * database so that the update happens even if the app is stopped first.
+     */
+    val linkedTitle: String = title,
 )
 
 /** A folder, recorded so that empty folders exist too. Paths have no leading or trailing slash. */

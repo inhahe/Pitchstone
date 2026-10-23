@@ -12,6 +12,9 @@ import kotlinx.coroutines.flow.Flow
 
 private const val SUMMARY = "id, title, folder, createdAt, updatedAt, pinned, trashedAt, snippet"
 
+/** A note in folder :old or below it: exact, case-sensitive comparison (LIKE ignores case). */
+private const val IN_FOLDER_TREE = "(folder = :old OR substr(folder, 1, length(:old) + 1) = :old || '/')"
+
 @Dao
 interface NoteDao {
     // ---- Notes ----------------------------------------------------------------------------
@@ -37,18 +40,28 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE id IN (:ids)")
     suspend fun notes(ids: Collection<Long>): List<NoteEntity>
 
-    @Query("SELECT title FROM notes WHERE trashedAt IS NULL")
-    fun observeTitles(): Flow<List<String>>
+    @Query("SELECT title, folder FROM notes WHERE trashedAt IS NULL")
+    fun observeLinkTargets(): Flow<List<NoteTitle>>
 
     @Query("SELECT id, title, folder, updatedAt FROM notes WHERE trashedAt IS NULL")
     suspend fun allRefs(): List<NoteRef>
 
-    /** Moves notes from folder [old] (and below) to [new], keeping their place under it. */
-    @Query(
-        "UPDATE notes SET folder = :new || substr(folder, :oldLength + 1) " +
-            "WHERE folder = :old OR folder LIKE :prefix ESCAPE '\\'",
-    )
-    suspend fun renameNoteFolders(old: String, new: String, oldLength: Int, prefix: String)
+    /**
+     * Moves notes from folder [old] (and below) to [new], keeping their place under it. Folder
+     * matching is exact (case-sensitive), and lengths are measured by SQLite on both sides.
+     */
+    @Query("UPDATE notes SET folder = :new || substr(folder, length(:old) + 1) WHERE $IN_FOLDER_TREE")
+    suspend fun renameNoteFolders(old: String, new: String)
+
+    /** Notes renamed since links to them were last updated (see [NoteEntity.linkedTitle]). */
+    @Query("SELECT * FROM notes WHERE title != linkedTitle AND trashedAt IS NULL")
+    suspend fun pendingRenames(): List<NoteEntity>
+
+    @Query("UPDATE notes SET linkedTitle = :title WHERE id = :id")
+    suspend fun setLinkedTitle(id: Long, title: String)
+
+    @Query("SELECT COUNT(*) FROM revisions WHERE noteId = :noteId")
+    suspend fun revisionCount(noteId: Long): Int
 
     @Insert
     suspend fun insert(note: NoteEntity): Long
@@ -77,9 +90,6 @@ interface NoteDao {
     @Query("SELECT id FROM notes WHERE trashedAt IS NOT NULL")
     suspend fun trashedIds(): List<Long>
 
-    @Query("SELECT COUNT(*) FROM notes WHERE trashedAt IS NULL")
-    suspend fun countNotes(): Int
-
     // ---- Folders --------------------------------------------------------------------------
 
     @Query("SELECT * FROM folders ORDER BY path")
@@ -91,14 +101,11 @@ interface NoteDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertFolder(folder: FolderEntity)
 
-    @Query("DELETE FROM folders WHERE path = :path OR path LIKE :prefix ESCAPE '\\'")
-    suspend fun deleteFolderTree(path: String, prefix: String)
+    @Query("DELETE FROM folders WHERE path = :old OR substr(path, 1, length(:old) + 1) = :old || '/'")
+    suspend fun deleteFolderTree(old: String)
 
-    @Query("SELECT id FROM notes WHERE folder = :path OR folder LIKE :prefix ESCAPE '\\'")
-    suspend fun notesInFolderTree(path: String, prefix: String): List<Long>
-
-    @Query("SELECT DISTINCT folder FROM notes WHERE folder != ''")
-    suspend fun usedFolders(): List<String>
+    @Query("SELECT id FROM notes WHERE $IN_FOLDER_TREE")
+    suspend fun notesInFolderTree(old: String): List<Long>
 
     // ---- Tags and links -------------------------------------------------------------------
 
@@ -173,6 +180,8 @@ interface NoteDao {
         if (links.isNotEmpty()) insertLinks(links)
     }
 }
+
+data class NoteTitle(val title: String, val folder: String)
 
 data class NoteRef(
     val id: Long,

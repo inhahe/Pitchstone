@@ -8,8 +8,10 @@ import app.inkdown.data.AppSettings
 import app.inkdown.data.FolderPaths
 import app.inkdown.data.NoteRepository
 import app.inkdown.data.NoteSummary
+import app.inkdown.data.NoteTitle
 import app.inkdown.markdown.PlainText
 import app.inkdown.markdown.WikiLinks
+import app.inkdown.ui.common.Urls
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -24,6 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -88,11 +92,14 @@ data class EditorUiState(
     val wikilinkDialog: WikilinkDialogState? = null,
     /** Set when the latest save failed; cleared by the next successful one. */
     val saveError: String? = null,
+    /** Why the note could not be closed (its latest changes are not saved). */
+    val leaveBlocked: String? = null,
 )
 
 sealed interface EditorEvent {
     data class OpenUrl(val url: String) : EditorEvent
-    data class OpenNote(val id: Long) : EditorEvent
+    /** Open note [id], at a `#heading` or `#^block` [anchor] if given. */
+    data class OpenNote(val id: Long, val anchor: String? = null) : EditorEvent
     data class ShowTag(val tag: String) : EditorEvent
     data class Message(val text: String) : EditorEvent
     /** Leave the editor (the note was closed, deleted or does not exist). */
@@ -107,8 +114,14 @@ interface EditorPort {
     fun showKeyboard()
 }
 
+/**
+ * One note's editing session.
+ *
+ * @param anchor a `#heading` or `#^block` to scroll to once the note is shown
+ */
 class EditorViewModel(
     val noteId: Long,
+    private val anchor: String?,
     private val container: AppContainer,
 ) : ViewModel() {
     private val repo = container.repository
@@ -121,26 +134,35 @@ class EditorViewModel(
 
     val settings: StateFlow<AppSettings> = container.settings.settings.stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
 
-    /** Titles of all notes, for wikilink suggestions and the link picker. */
-    val noteTitles: StateFlow<List<String>> = repo.titles()
+    /** Every note's title and folder: for link suggestions, the link picker and missing-link marks. */
+    private val linkTargets: StateFlow<List<NoteTitle>> = repo.linkTargets()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** The titles of all notes, each once. */
+    val noteTitles: StateFlow<List<String>> = linkTargets
+        .map { targets -> targets.map { it.title }.filter { it.isNotBlank() }.distinct() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private var port: EditorPort? = null
     private var pageReady = false
     private var loadedIntoPage = false
 
+    // Read on the main thread, written there and by saves in the app scope.
     /** The newest content known (from the database, or reported by the page). */
-    private var content: Content? = null
+    @Volatile private var content: Content? = null
     /** What the database holds as far as this editor knows. */
-    private var saved: Content? = null
+    @Volatile private var saved: Content? = null
     /** The content being written right now. */
-    private var inFlight: Content? = null
+    @Volatile private var inFlight: Content? = null
     private val saveLock = Mutex()
 
-    /** The title when editing began, and the name links were last updated to. */
-    private var linkedTitle: String? = null
-    /** Whether the note was empty when opened (a new note): left empty, it is deleted. */
-    private var startedEmpty = false
+    /** Whether the note was empty when opened: a new note gets the keyboard on its title. */
+    private var openedEmpty = false
+    /** Whether the note held any text during this session. One that never did may be discarded. */
+    @Volatile private var everHadContent = false
+    /** Set when the page could not produce markdown for its edits: they are not saved. */
+    @Volatile private var pageError: String? = null
+    private val finished = AtomicBoolean(false)
     private var themeJson: JsonObject? = null
 
     init {
@@ -154,9 +176,9 @@ class EditorViewModel(
             val c = Content(note.title, note.body)
             content = c
             saved = c
-            linkedTitle = note.title
-            startedEmpty = note.title.isBlank() && note.body.isBlank()
-            val mode = if (settings.value.openInReadingMode && !startedEmpty) EditorMode.READ else EditorMode.EDIT
+            openedEmpty = note.title.isBlank() && note.body.isBlank()
+            everHadContent = !openedEmpty
+            val mode = if (settings.value.openInReadingMode && !openedEmpty) EditorMode.READ else EditorMode.EDIT
             _state.update {
                 it.copy(loaded = true, title = note.title, folder = note.folder, pinned = note.pinned, mode = mode)
             }
@@ -164,10 +186,10 @@ class EditorViewModel(
             watchForOutsideChanges()
         }
         viewModelScope.launch {
-            combine(settings, noteTitles) { s, t -> s to t }.collect { (s, titles) ->
+            combine(settings, linkTargets) { s, t -> s to t }.collect { (s, targets) ->
                 if (loadedIntoPage) {
                     port?.call("setSettings", settingsJson(s).toString())
-                    port?.call("setNoteTitles", titlesJson(titles).toString())
+                    port?.call("setNotes", notesJson(targets).toString())
                 }
             }
         }
@@ -229,12 +251,14 @@ class EditorViewModel(
         themeJson?.let { put("theme", it) }
     }
 
-    /** Titles as they are written, and as wikilinks can spell them, for "missing note" marks. */
-    private fun titlesJson(titles: List<String>) = buildJsonArray {
-        val seen = HashSet<String>()
-        for (t in titles) {
-            for (name in listOf(t, WikiLinks.linkName(t))) if (name.isNotEmpty() && seen.add(name)) add(JsonPrimitive(name))
-        }
+    /** The other notes for the page (NoteNames in editor.ts): titles, and keys to find them by. */
+    private fun notesJson(targets: List<NoteTitle>) = buildJsonObject {
+        put("titles", buildJsonArray {
+            targets.map { it.title }.filter { it.isNotBlank() }.distinct().forEach { add(JsonPrimitive(it)) }
+        })
+        put("keys", buildJsonArray {
+            targets.flatMap { WikiLinks.lookupKeys(it.title, it.folder) }.distinct().forEach { add(JsonPrimitive(it)) }
+        })
     }
 
     private fun loadIntoPage() {
@@ -242,18 +266,19 @@ class EditorViewModel(
         val c = content ?: return
         if (!pageReady || loadedIntoPage) return
         loadedIntoPage = true
-        val fresh = startedEmpty && c.title.isEmpty() && c.markdown.isEmpty()
+        val fresh = openedEmpty && c.title.isEmpty() && c.markdown.isEmpty()
         val payload = buildJsonObject {
             put("markdown", c.markdown)
             put("title", c.title)
             put("mode", _state.value.mode.js)
             put("settings", settingsJson(settings.value))
-            put("noteTitles", titlesJson(noteTitles.value))
+            put("notes", notesJson(linkTargets.value))
             put("focus", if (fresh) "title" else "none")
         }
         p.call("load", payload.toString())
         // A new note starts with the keyboard open on its title.
         if (fresh && _state.value.mode == EditorMode.EDIT) p.showKeyboard()
+        if (anchor != null) p.call("scrollToAnchor", anchor)
     }
 
     /** A message from the page (see editor/src/editor/bridge.ts). */
@@ -297,6 +322,7 @@ class EditorViewModel(
                 val text = when (str("code")) {
                     "parseFailed" -> "This note opened in source mode: the editor could not read it safely."
                     "sourceParseFailed" -> "The markdown could not be read; staying in source mode."
+                    "serializeFailed" -> "Your latest changes are not saved: the editor could not convert them to markdown."
                     else -> str("message") ?: "Something went wrong in the editor."
                 }
                 viewModelScope.launch { _events.send(EditorEvent.Message(text)) }
@@ -321,22 +347,28 @@ class EditorViewModel(
 
     private fun onContent(c: Content) {
         content = c
+        if (c.title.isNotBlank() || c.markdown.isNotBlank()) everHadContent = true
         _state.update { it.copy(title = c.title) }
         // Saves run in the app's scope: leaving the screen must not cancel one.
         container.appScope.launch { saveNow() }
     }
 
-    /** Writes the newest content if the database does not have it yet. One save at a time. */
-    private suspend fun saveNow() = saveLock.withLock {
-        val c = content ?: return@withLock
-        if (c == saved) return@withLock
+    /**
+     * Writes the newest content if the database does not have it yet, one save at a time.
+     * Returns whether the database now holds everything this editor knows.
+     */
+    private suspend fun saveNow(): Boolean = saveLock.withLock {
+        val c = content ?: return@withLock true
+        if (c == saved) return@withLock true
         inFlight = c
         try {
             val result = repo.save(noteId, c.title, c.markdown)
             if (result != NoteRepository.SaveResult.MISSING) saved = c
             _state.update { it.copy(saveError = null) }
+            true
         } catch (e: Exception) {
             _state.update { it.copy(saveError = e.message ?: "Could not save") }
+            false
         } finally {
             inFlight = null
         }
@@ -344,14 +376,14 @@ class EditorViewModel(
 
     /**
      * Collects the page's unsaved change, saves everything, then runs [then] on the main
-     * thread. Used before anything that leaves the note.
+     * thread with whether everything is saved. Used before anything that leaves the note.
      */
-    fun flushThen(then: suspend () -> Unit) {
+    private fun flushThen(then: suspend (saved: Boolean) -> Unit) {
         val p = port
         val finish = {
             container.appScope.launch {
-                saveNow()
-                withContext(Dispatchers.Main) { then() }
+                val ok = saveNow() && pageError == null
+                withContext(Dispatchers.Main) { then(ok) }
             }
         }
         if (p == null || !loadedIntoPage) {
@@ -359,60 +391,117 @@ class EditorViewModel(
             return
         }
         p.flush { result ->
+            val error = result?.get("error")?.jsonPrimitive?.contentOrNull
+            if (error != null) pageError = error
             if (result != null && result["dirty"]?.jsonPrimitive?.booleanOrNull == true) {
                 val markdown = result["markdown"]?.jsonPrimitive?.contentOrNull
-                if (markdown != null) {
-                    content = Content(result["title"]?.jsonPrimitive?.contentOrNull ?: "", markdown)
-                    _state.update { it.copy(title = content!!.title) }
+                if (markdown != null && error == null) {
+                    pageError = null
+                    val c = Content(result["title"]?.jsonPrimitive?.contentOrNull ?: "", markdown)
+                    content = c
+                    if (c.title.isNotBlank() || c.markdown.isNotBlank()) everHadContent = true
+                    _state.update { it.copy(title = c.title) }
                 }
             }
             finish()
         }
     }
 
-    /** The app goes to the background: save, and update links if the note was renamed. */
-    fun onStop() = flushThen { updateLinksAfterRename() }
+    /** Saves what there is, then runs [action] (which does not leave the note for good). */
+    fun flushThenRun(action: suspend () -> Unit) = flushThen { action() }
+
+    /** The app goes to the background: save. */
+    fun onStop() = flushThen {}
 
     /**
-     * Leaving the note: save, delete it if it was created empty and is still empty, and update
-     * links to it if it was renamed. Then [onClosed].
+     * Leaving the note: save, then finish the session (see [finishSession]) and [onClosed].
+     * If the note cannot be saved, it stays open and [EditorUiState.leaveBlocked] says why,
+     * so nothing typed is thrown away without asking.
      */
-    fun close(onClosed: () -> Unit) = flushThen {
-        val c = content
-        if (c != null && c.title.isBlank() && c.markdown.isBlank()) {
-            if (startedEmpty) {
-                repo.deleteForever(listOf(noteId))
-            } else {
-                // A note emptied by hand goes to the trash, recoverable, rather than away.
-                repo.moveToTrash(listOf(noteId))
-                container.listMessages.trySend(
-                    ListMessage("Empty note moved to trash", "Undo") { repo.restore(listOf(noteId)) },
-                )
-            }
-        } else {
-            updateLinksAfterRename()
+    fun close(onClosed: () -> Unit) = flushThen { ok ->
+        if (!ok) {
+            val why = pageError?.let { "The editor could not convert your latest changes to markdown ($it)." }
+                ?: "Your latest changes could not be saved: ${_state.value.saveError ?: "unknown error"}."
+            _state.update { it.copy(leaveBlocked = why) }
+            return@flushThen
         }
+        finishSession()
         onClosed()
     }
 
-    private suspend fun updateLinksAfterRename() {
-        val c = content ?: return
-        val old = linkedTitle ?: return
-        if (c.title == old || !settings.value.updateLinksOnRename) return
-        val changed = repo.propagateRename(noteId, old, c.title)
-        linkedTitle = c.title
-        if (changed > 0) container.listMessages.send(ListMessage("Updated links in $changed ${if (changed == 1) "note" else "notes"}"))
+    /** Leaves even though the latest changes are not saved (the user chose to). */
+    fun leaveAnyway(onClosed: () -> Unit) {
+        _state.update { it.copy(leaveBlocked = null) }
+        container.appScope.launch {
+            finishSession()
+            withContext(Dispatchers.Main) { onClosed() }
+        }
     }
 
-    private fun openWikilink(target: String) = flushThen {
-        val folder = _state.value.folder
-        val ref = repo.resolveLink(target, folder)
-        val id = ref?.id ?: run {
-            val name = target.substringBefore('#').trim().substringAfterLast('/')
-            if (name.isEmpty()) return@flushThen
-            repo.create(title = name, folder = folder)
+    fun dismissLeaveBlocked() = _state.update { it.copy(leaveBlocked = null) }
+
+    /**
+     * The end of an editing session, once (when the note is closed, or its screen is removed
+     * some other way). An empty note that never held anything is discarded; one that was
+     * emptied goes to the trash (its text is in the version history). A renamed note gets the
+     * links to it updated.
+     */
+    private suspend fun finishSession() {
+        if (!finished.compareAndSet(false, true)) return
+        val c = content ?: return
+        if (c.title.isBlank() && c.markdown.isBlank()) {
+            if (!everHadContent && repo.isPristine(noteId)) {
+                repo.deleteForever(listOf(noteId))
+            } else if (repo.note(noteId)?.trashedAt == null) {
+                repo.moveToTrash(listOf(noteId))
+                container.listMessages.trySend(ListMessage("Empty note moved to trash", "Undo") { repo.restore(listOf(noteId)) })
+            }
+            return
         }
-        if (id != noteId) _events.send(EditorEvent.OpenNote(id))
+        val changed = repo.applyRename(noteId, settings.value.updateLinksOnRename)
+        if (changed > 0) container.listMessages.trySend(ListMessage("Updated links in $changed ${if (changed == 1) "note" else "notes"}"))
+    }
+
+    override fun onCleared() {
+        // Removed without close() (a tag tapped further up the stack, say): save and finish.
+        container.appScope.launch {
+            saveNow()
+            finishSession()
+        }
+    }
+
+    /**
+     * Follows a [[link]]: to the note it names, created if missing (`folder/note` in that
+     * folder, as Obsidian does), and to its `#heading` or `#^block` if it has one.
+     */
+    private fun openWikilink(target: String) {
+        val anchor = target.substringAfter('#', "").trim().ifEmpty { null }
+        val name = target.substringBefore('#').trim()
+        if (name.isEmpty()) {
+            // [[#Heading]]: a place in this note.
+            if (anchor != null) port?.call("scrollToAnchor", anchor)
+            return
+        }
+        flushThen {
+            val id = repo.resolveLink(target, _state.value.folder)?.id ?: run {
+                // A link to a file (an image, a PDF) is not a note: do not make one up.
+                val ext = name.substringAfterLast('.', "").lowercase()
+                if (ext.isNotEmpty() && ext != "md" && ext.length <= 5 && !name.endsWith(" ")) {
+                    _events.send(EditorEvent.Message("“$name” is a file, not a note; attachments are not supported"))
+                    return@flushThen
+                }
+                val path = if (name.endsWith(".md", ignoreCase = true)) name.dropLast(3) else name
+                val folder = if ('/' in path) FolderPaths.normalize(path.substringBeforeLast('/')) else _state.value.folder
+                val title = path.substringAfterLast('/').trim()
+                if (title.isEmpty()) return@flushThen
+                repo.create(title = title, folder = folder)
+            }
+            if (id == noteId) {
+                if (anchor != null) port?.call("scrollToAnchor", anchor)
+            } else {
+                _events.send(EditorEvent.OpenNote(id, anchor))
+            }
+        }
     }
 
     // ---- Commands from the screen ----------------------------------------------------------
@@ -447,7 +536,7 @@ class EditorViewModel(
         _state.update { it.copy(linkDialog = null) }
         val url = href.trim().let { h ->
             // A bare domain gets https://, so the link opens.
-            if (h.isNotEmpty() && !Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(h) && !h.startsWith("/") && !h.startsWith("#") && h.contains('.')) "https://$h" else h
+            if (h.isNotEmpty() && !Urls.hasScheme(h) && !h.startsWith("/") && !h.startsWith("#") && h.contains('.')) "https://$h" else h
         }
         command("setLink", buildJsonObject { put("text", text); put("href", url) })
     }
@@ -463,8 +552,8 @@ class EditorViewModel(
 
     fun insertWikilink(target: String, alias: String?) {
         _state.update { it.copy(wikilinkDialog = null) }
-        val clean = WikiLinks.linkName(target)
-        if (clean.isEmpty()) return
+        val clean = WikiLinks.cleanTarget(target)
+        if (clean.substringBefore('#').isBlank() && !clean.startsWith("#")) return
         command("insertWikilink", buildJsonObject {
             put("target", clean)
             if (!alias.isNullOrBlank()) put("alias", alias)

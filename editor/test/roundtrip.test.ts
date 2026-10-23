@@ -43,6 +43,13 @@ describe('markdown round trip', () => {
     }
   })
 
+  it('keeps the checkbox of a task with no text and a nested list', () => {
+    expect(roundTrip('- [ ]\n  - child\n')).toBe('- [ ]\n  - child\n')
+    const nested = bullet_list.create(null, [list_item.create(null, [p(s('child'))])])
+    const d = doc.create(null, [bullet_list.create(null, [list_item.create({checked: true}, [paragraph.create(), nested])])])
+    expect(serializeMarkdown(d).markdown).toBe('- [x]\n  - child\n')
+  })
+
   it('treats typed markdown symbols as literal text', () => {
     const literal = [
       '**not bold**',

@@ -93,6 +93,10 @@ function normalizeBlock(node: Node, ctx: NormContext): Node {
     }
   } else if (t === nodes.blockquote || t === nodes.list_item || t === nodes.footnote_def) {
     const nonEmpty = children.filter((c) => !isEmptyParagraph(c))
+    // The checkbox is written on the item's first paragraph, which a task keeps even when it
+    // has no text (`- [ ]` over a nested list).
+    const task = t === nodes.list_item && typeof node.attrs.checked === 'boolean'
+    if (task && nonEmpty.length && nonEmpty[0].type !== nodes.paragraph) nonEmpty.unshift(nodes.paragraph.create())
     children = nonEmpty.length ? nonEmpty : [nodes.paragraph.create()]
   }
   if (t === nodes.list_item) {
@@ -460,6 +464,16 @@ function destination(href: string, title: string | null): string {
   return dest
 }
 
+/** The markdown of an inline atom: an image, a wikilink, a footnote reference or inline HTML. */
+export function atomMarkdown(node: Node): string {
+  const a = node.attrs
+  if (node.type === nodes.image) return '![' + escapeAlt(a.alt) + '](' + destination(a.src, a.title) + ')'
+  if (node.type === nodes.wikilink) return (a.embed ? '!' : '') + '[[' + a.target + (a.alias != null ? '|' + a.alias : '') + ']]'
+  if (node.type === nodes.footnote_ref) return '[^' + a.label + ']'
+  if (node.type === nodes.html_inline) return String(a.raw)
+  throw new Error(`Not an inline atom: ${node.type.name}`)
+}
+
 /** Alt text of an image: everything is escaped, since formatting would be flattened anyway. */
 function escapeAlt(alt: string): string {
   return alt.replace(/[\\`*_~=[\]<&!]/g, '\\$&')
@@ -540,17 +554,16 @@ function renderInline(items: readonly Node[], opts: InlineOptions): string {
         out += text
       }
     } else if (item.type === nodes.image) {
-      out += '![' + escapeAlt(item.attrs.alt) + '](' + destination(item.attrs.src, item.attrs.title) + ')'
+      out += atomMarkdown(item)
     } else if (item.type === nodes.wikilink) {
-      const {target, alias, embed} = item.attrs
-      if (!embed) guardBang()
-      out += (embed ? '!' : '') + '[[' + target + (alias != null ? '|' + alias : '') + ']]'
+      if (!item.attrs.embed) guardBang()
+      out += atomMarkdown(item)
     } else if (item.type === nodes.footnote_ref) {
       guardBang()
-      out += '[^' + item.attrs.label + ']'
+      out += atomMarkdown(item)
     } else if (item.type === nodes.html_inline) {
       // A tag can span lines; RAW_NEWLINE keeps those apart from the paragraph's own breaks.
-      out += String(item.attrs.raw).replace(/\n/g, RAW_NEWLINE)
+      out += atomMarkdown(item).replace(/\n/g, RAW_NEWLINE)
     } else {
       throw new Error(`Cannot serialize inline node ${item.type.name}`)
     }
@@ -648,8 +661,13 @@ function flatLine(rendered: string, heading: boolean): string {
 // ---------------------------------------------------------------------------------------------
 
 interface DocContext {
-  env: ParseEnv
-  /** Identifies `env`, so cached renderings are reused only under the same definitions. */
+  /**
+   * The env holding the document's link and footnote definitions, as JSON: parsing writes into
+   * its env, so every verification parses with a fresh copy. (JSON rather than structuredClone,
+   * which WebView before Chrome 98 lacks; the env holds only strings, numbers and plain objects.)
+   */
+  envJson: string
+  /** Identifies the env, so cached renderings are reused only under the same definitions. */
   signature: string
 }
 
@@ -671,10 +689,10 @@ function textblockMatches(text: string, parent: NodeType, expected: Fragment, ct
     let children
     if (parent === nodes.table_cell || parent === nodes.table_header) {
       // The table rule unescapes \| before inline parsing; mirror it.
-      children = md.parseInline(unescapePipes(text), structuredClone(ctx.env))[0]?.children ?? []
+      children = md.parseInline(unescapePipes(text), JSON.parse(ctx.envJson))[0]?.children ?? []
     } else {
       const src = parent === nodes.heading ? '#'.repeat(level ?? 1) + ' ' + text : text
-      const tokens = md.parse(src, structuredClone(ctx.env))
+      const tokens = md.parse(src, JSON.parse(ctx.envJson))
       const open = parent === nodes.heading ? 'heading_open' : 'paragraph_open'
       if (tokens.length !== 3 || tokens[0].type !== open || tokens[1].type !== 'inline') return false
       children = tokens[1].children ?? []
@@ -1080,7 +1098,7 @@ function buildContext(doc: Node): DocContext {
     for (const label of footnotes) refs[':' + label] = -1
     env.footnotes = {refs}
   }
-  return {env, signature: JSON.stringify([defs, footnotes])}
+  return {envJson: JSON.stringify(env), signature: JSON.stringify([defs, footnotes])}
 }
 
 function renderDoc(doc: Node, ctx: DocContext, escalated: Set<number>): {markdown: string; doc: Node; exact: boolean} {

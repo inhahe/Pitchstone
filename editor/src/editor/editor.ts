@@ -9,7 +9,7 @@ import {history, redo, undo} from 'prosemirror-history'
 import {undoInputRule} from 'prosemirror-inputrules'
 import {keymap} from 'prosemirror-keymap'
 import {Fragment, Slice, type Node} from 'prosemirror-model'
-import {type Command, EditorState, Selection, type Transaction} from 'prosemirror-state'
+import {type Command, EditorState, Selection, TextSelection, type Transaction} from 'prosemirror-state'
 import {tableEditing} from 'prosemirror-tables'
 import {EditorView} from 'prosemirror-view'
 import {MarkdownParseError, parseMarkdown} from '../markdown/parse'
@@ -40,6 +40,7 @@ import {
   tableCommands,
 } from './commands'
 import {decorationState, decorationsKey, decorationsPlugin} from './decorations'
+import {anchorPosition} from './links'
 import {structurePlugin, toolbarPlugin} from './plugins'
 import {enterShortcut, markdownInputRules} from './rules'
 import {applySettings, type EditorSettings, settings} from './settings'
@@ -48,12 +49,20 @@ import {ImageView, ListItemView} from './views'
 
 const {nodes, marks} = schema
 
+/** The other notes, for link suggestions and for marking links to missing notes. */
+export interface NoteNames {
+  /** Every note's title, as shown. */
+  titles: string[]
+  /** The app's lookup keys of every note (see links.ts, noteExists). */
+  keys: string[]
+}
+
 export interface LoadPayload {
   markdown: string
   title: string
   mode?: Mode
   settings?: Partial<EditorSettings>
-  noteTitles?: string[]
+  notes?: NoteNames
   /** Where to put the cursor: the title (new notes), the end of the text, or nowhere. */
   focus?: 'title' | 'end' | 'none'
 }
@@ -65,6 +74,11 @@ export interface FlushResult {
   title: string
   exact: boolean
   seq: number
+  /**
+   * Set when the change could not be turned into markdown. It stays pending (a later flush
+   * tries again), and `markdown` is empty: there is nothing to save.
+   */
+  error?: string
 }
 
 const SAVE_DELAY_MS = 400
@@ -74,13 +88,20 @@ export class InkdownEditor {
   private readonly title: HTMLTextAreaElement
   private readonly source: HTMLTextAreaElement
   private mode: Mode = 'edit'
-  private noteTitles: string[] = []
+  private notes: NoteNames = {titles: [], keys: []}
   private dirty = false
   private seq = 0
   private saveTimer: ReturnType<typeof setTimeout> | null = null
   /** The markdown shown when source mode was entered; unchanged source is not re-parsed. */
   private sourceBaseline: string | null = null
   private warnedInexact = false
+  /** Whether the last attempt to report a change failed (the app is told once per streak). */
+  private failing = false
+  /**
+   * Whether the view holds an empty stand-in because the note could not be parsed: it must
+   * never be shown or saved, so leaving source mode always re-parses.
+   */
+  private placeholder = false
 
   constructor(root: HTMLElement) {
     this.title = root.querySelector('#title') as HTMLTextAreaElement
@@ -167,7 +188,7 @@ export class InkdownEditor {
       doc,
       plugins: [
         markdownInputRules(),
-        suggestPlugin(() => this.noteTitles, () => this.mode),
+        suggestPlugin(() => this.notes.titles, () => this.mode),
         keymap({
           'Mod-z': undo,
           'Shift-Mod-z': redo,
@@ -223,32 +244,49 @@ export class InkdownEditor {
     return {markdown: r.markdown, exact: r.exact}
   }
 
-  /** Computes the pending change, if any, and marks it as reported. */
+  /**
+   * Computes the pending change, if any, and marks it as reported. A change that cannot be
+   * computed stays pending and comes back with `error`.
+   */
   flush(): FlushResult {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer)
       this.saveTimer = null
     }
-    const wasDirty = this.dirty
+    const title = this.title.value
+    if (!this.dirty) return {dirty: false, markdown: '', title, exact: true, seq: this.seq}
+    let r: {markdown: string; exact: boolean}
+    try {
+      r = this.currentMarkdown()
+    } catch (e) {
+      return {dirty: true, markdown: '', title, exact: false, seq: this.seq, error: e instanceof Error ? e.message : String(e)}
+    }
     this.dirty = false
-    const {markdown, exact} = wasDirty ? this.currentMarkdown() : {markdown: '', exact: true}
-    if (wasDirty) this.seq++
-    return {dirty: wasDirty, markdown, title: this.title.value, exact, seq: this.seq}
+    this.seq++
+    return {dirty: true, markdown: r.markdown, title, exact: r.exact, seq: this.seq}
   }
 
   /** Reports the pending change to the app, if any. */
   private emitChange() {
     const r = this.flush()
+    if (r.error !== undefined) {
+      if (!this.failing) post({type: 'warning', code: 'serializeFailed', message: r.error})
+      this.failing = true
+      return
+    }
+    this.failing = false
     if (r.dirty) post({type: 'changed', markdown: r.markdown, title: r.title, exact: r.exact, seq: r.seq})
   }
 
   load(p: LoadPayload) {
     if (p.settings) this.setSettings(p.settings)
-    if (p.noteTitles) this.noteTitles = p.noteTitles
+    if (p.notes) this.notes = p.notes
     if (this.saveTimer) clearTimeout(this.saveTimer)
     this.saveTimer = null
     this.dirty = false
     this.warnedInexact = false
+    this.failing = false
+    this.placeholder = false
     this.title.value = p.title
     this.fitTitle()
     let mode: Mode = p.mode ?? 'edit'
@@ -261,9 +299,10 @@ export class InkdownEditor {
       post({type: 'warning', code: 'parseFailed', message: e.message})
       doc = schema.nodes.doc.createAndFill()!
       mode = 'source'
+      this.placeholder = true
     }
     this.view.updateState(this.createState(doc))
-    this.view.dispatch(this.view.state.tr.setMeta(decorationsKey, {titles: this.noteTitles}))
+    this.view.dispatch(this.view.state.tr.setMeta(decorationsKey, {keys: this.notes.keys}))
     this.source.value = p.markdown
     this.sourceBaseline = p.markdown
     this.applyMode(mode, false)
@@ -280,9 +319,9 @@ export class InkdownEditor {
     this.fitTitle()
   }
 
-  setNoteTitles(titles: string[]) {
-    this.noteTitles = titles
-    this.view.dispatch(this.view.state.tr.setMeta(decorationsKey, {titles}))
+  setNotes(notes: NoteNames) {
+    this.notes = notes
+    this.view.dispatch(this.view.state.tr.setMeta(decorationsKey, {keys: notes.keys}))
   }
 
   getMode(): Mode {
@@ -297,7 +336,7 @@ export class InkdownEditor {
     const previous = this.mode
     if (previous === 'source' && mode !== 'source' && fromUser) {
       const text = this.source.value
-      if (text !== this.sourceBaseline) {
+      if (text !== this.sourceBaseline || this.placeholder) {
         let doc: Node
         try {
           doc = parseMarkdown(text)
@@ -307,15 +346,33 @@ export class InkdownEditor {
           post({type: 'modeChanged', mode: 'source'})
           return
         }
-        // Undoable, like any other edit.
-        const tr = this.view.state.tr.replaceWith(0, this.view.state.doc.content.size, doc.content)
-        tr.setSelection(Selection.atStart(tr.doc))
-        this.view.dispatch(tr)
+        if (this.placeholder) {
+          // Nothing to undo back to: the stand-in was never the note.
+          const pending = this.dirty
+          this.view.updateState(this.createState(doc))
+          this.view.dispatch(this.view.state.tr.setMeta(decorationsKey, {keys: this.notes.keys}))
+          this.dirty = pending
+          this.placeholder = false
+        } else {
+          // Undoable, like any other edit.
+          const tr = this.view.state.tr.replaceWith(0, this.view.state.doc.content.size, doc.content)
+          tr.setSelection(Selection.atStart(tr.doc))
+          this.view.dispatch(tr)
+        }
       }
     }
     if (mode === 'source' && previous !== 'source') {
       const pending = this.dirty
-      const text = fromUser ? serializeMarkdown(this.view.state.doc).markdown : this.source.value
+      let text = this.source.value
+      if (fromUser) {
+        try {
+          text = serializeMarkdown(this.view.state.doc).markdown
+        } catch (e) {
+          post({type: 'warning', code: 'serializeFailed', message: e instanceof Error ? e.message : String(e)})
+          post({type: 'modeChanged', mode: previous})
+          return
+        }
+      }
       this.source.value = text
       this.sourceBaseline = text
       this.dirty = pending
@@ -329,6 +386,20 @@ export class InkdownEditor {
     this.fitSource()
     this.view.dispatch(this.view.state.tr.setMeta('mode', mode))
     post({type: 'modeChanged', mode})
+  }
+
+  /**
+   * Shows the heading or block a link's `#anchor` names (see anchorPosition) at the top of the
+   * screen, with the cursor at its start. Returns whether it was found.
+   */
+  scrollToAnchor(anchor: string): boolean {
+    if (this.mode === 'source') return false
+    const pos = anchorPosition(this.view.state.doc, anchor)
+    if (pos === null) return false
+    this.view.dispatch(this.view.state.tr.setSelection(TextSelection.create(this.view.state.doc, pos + 1)))
+    const dom = this.view.nodeDOM(pos)
+    if (dom instanceof HTMLElement) dom.scrollIntoView({block: 'start'})
+    return true
   }
 
   focusEditor(where: 'start' | 'end') {

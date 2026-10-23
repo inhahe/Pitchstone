@@ -54,6 +54,7 @@ body {
   /* A faint rule sets the note's title apart from a first heading in the text. */
   padding: 0 0 10px;
   margin: 0 0 14px;
+  border-bottom: 1px solid var(--outline); /* WebView before Chrome 111 has no color-mix */
   border-bottom: 1px solid color-mix(in srgb, var(--outline) 60%, transparent);
   background: transparent;
   color: var(--fg);
@@ -341,6 +342,7 @@ body[data-mode='read'] .ProseMirror {
 .ProseMirror .wikilink {
   color: var(--accent);
   font-weight: 500;
+  border-bottom: 1px solid var(--outline);
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius: 2px;
   cursor: pointer;
@@ -359,6 +361,7 @@ body[data-mode='read'] .ProseMirror {
 
 .ProseMirror .tag {
   color: var(--accent);
+  background: var(--surface-variant);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-radius: 10px;
   padding: 0 0.3em;
@@ -426,6 +429,7 @@ body[data-mode='read'] .ProseMirror {
 }
 
 .ProseMirror .find-match {
+  background: var(--highlight);
   background: color-mix(in srgb, var(--accent) 22%, transparent);
   border-radius: 2px;
 }

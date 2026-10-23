@@ -66,13 +66,12 @@ class NoteRepository(
         return dao.observeTagged(key, escapeLike(key) + "/%")
     }
 
-    fun titles(): Flow<List<String>> = dao.observeTitles()
+    /** Every note's title and folder, for linking. */
+    fun linkTargets(): Flow<List<NoteTitle>> = dao.observeLinkTargets()
 
     fun observeNote(id: Long): Flow<NoteEntity?> = dao.observeNote(id)
 
     suspend fun note(id: Long): NoteEntity? = dao.note(id)
-
-    suspend fun notes(ids: Collection<Long>): List<NoteEntity> = dao.notes(ids)
 
     suspend fun allNotes(): List<NoteEntity> = dao.allNotes()
 
@@ -100,22 +99,23 @@ class NoteRepository(
     }
 
     /**
-     * The note a wikilink [target] leads to: matched by name (as [WikiLinks.key]), restricted
-     * to a folder when the target names one (`folder/note`). Among several, the one in
-     * [fromFolder] wins, then one at the top level, then the most recently edited.
+     * The note a wikilink [target] leads to, matched by [WikiLinks.key]: first a note whose
+     * whole title is the target's name (titles may contain `/`), then, for `folder/note`, a
+     * note named by the last part in that folder or one ending in that path (see
+     * [WikiLinks.lookupKeys]). Among several, the one in [fromFolder] wins, then one at the top
+     * level, then the most recently edited. A `.md` suffix is ignored. The editor marks links
+     * to missing notes by the same rules (editor/src/editor/links.ts).
      */
     suspend fun resolveLink(target: String, fromFolder: String): NoteRef? {
-        val name = target.substringBefore('#').trim().removeSuffix(".md")
+        var name = target.substringBefore('#').trim()
+        if (name.endsWith(".md", ignoreCase = true)) name = name.dropLast(3)
         if (name.isEmpty()) return null
-        val folder = FolderPaths.normalize(name.substringBeforeLast('/', ""))
-        val key = WikiLinks.key(name.substringAfterLast('/'))
-        val candidates = dao.allRefs().filter { ref ->
-            WikiLinks.key(ref.title) == key &&
-                (folder.isEmpty() || ref.folder.equals(folder, ignoreCase = true) || ref.folder.endsWith("/$folder", ignoreCase = true))
-        }
-        return candidates.minWithOrNull(
-            compareBy<NoteRef>({ if (it.folder == fromFolder) 0 else if (it.folder.isEmpty()) 1 else 2 }, { -it.updatedAt }),
-        )
+        val refs = dao.allRefs()
+        val prefer = compareBy<NoteRef>({ if (it.folder == fromFolder) 0 else if (it.folder.isEmpty()) 1 else 2 }, { -it.updatedAt })
+        val whole = WikiLinks.key(name)
+        refs.filter { WikiLinks.key(it.title) == whole }.minWithOrNull(prefer)?.let { return it }
+        val path = WikiLinks.pathKey(name) ?: return null
+        return refs.filter { path in WikiLinks.lookupKeys(it.title, it.folder) }.minWithOrNull(prefer)
     }
 
     /** Notes that link to the note [noteId]. */
@@ -179,21 +179,34 @@ class NoteRepository(
         }
     }
 
-    enum class SaveResult { SAVED, UNCHANGED, MISSING }
+    enum class SaveResult {
+        SAVED,
+        UNCHANGED,
+        MISSING,
+        /** The note's body was not the expected one (someone else saved it first). */
+        CONFLICT,
+    }
 
     /**
      * Saves a note's title and body. The version being replaced is kept as a revision when the
-     * last revision is older than [REVISION_INTERVAL_MS], so edits can be undone later.
+     * last revision is older than [REVISION_INTERVAL_MS], and always when the save empties the
+     * note or removes more than half of it, so a deletion can be undone from the history.
+     *
+     * @param expectedBody if given, save only if the stored body is still this (compare and
+     *   set, for changes computed from a body read earlier), else return [SaveResult.CONFLICT]
      */
-    suspend fun save(id: Long, title: String, body: String, forceRevision: Boolean = false): SaveResult {
+    suspend fun save(id: Long, title: String, body: String, forceRevision: Boolean = false, expectedBody: String? = null): SaveResult {
         val index = indexOf(title, body)
         return db.withTransaction {
             val current = dao.note(id) ?: return@withTransaction SaveResult.MISSING
+            if (expectedBody != null && current.body != expectedBody) return@withTransaction SaveResult.CONFLICT
             if (current.title == title && current.body == body) return@withTransaction SaveResult.UNCHANGED
             val now = clock()
             val hadContent = current.title.isNotEmpty() || current.body.isNotEmpty()
+            val emptied = title.isBlank() && body.isBlank()
+            val shrunk = body.length < current.body.length / 2
             val last = dao.lastRevisionTime(id)
-            if (hadContent && (forceRevision || last == null || now - last >= REVISION_INTERVAL_MS)) {
+            if (hadContent && (forceRevision || emptied || shrunk || last == null || now - last >= REVISION_INTERVAL_MS)) {
                 dao.insertRevision(RevisionEntity(noteId = id, title = current.title, body = current.body, savedAt = now))
                 dao.pruneRevisions(id, now - REVISION_RETENTION_MS, keep = 10)
                 dao.capRevisions(id, MAX_REVISIONS_PER_NOTE)
@@ -212,40 +225,85 @@ class NoteRepository(
     }
 
     /**
-     * After a note is renamed, points the links to its old name at its new name, in every
-     * note. Does nothing while another note still has the old name (the links may mean that
-     * one). Returns how many notes changed.
+     * Whether a note was never written: its row is as created (never updated) and it has no
+     * history. Only such a note may be discarded without going to the trash.
      */
-    suspend fun propagateRename(noteId: Long, oldTitle: String, newTitle: String): Int {
+    suspend fun isPristine(noteId: Long): Boolean {
+        val note = dao.note(noteId) ?: return false
+        return note.updatedAt == note.createdAt && dao.revisionCount(noteId) == 0
+    }
+
+    /**
+     * Completes a rename of note [noteId]: points [[links]] to its old name (its
+     * [NoteEntity.linkedTitle]) at its title, in every note, then records the title as linked.
+     * Links are left alone when [updateLinks] is off, and while another note still has the old
+     * name (they may mean that one). Each linking note is rewritten from the body it was read
+     * with, so a save racing with this one is never overwritten. Returns how many notes changed.
+     */
+    suspend fun applyRename(noteId: Long, updateLinks: Boolean): Int {
+        val note = dao.note(noteId) ?: return 0
+        if (note.linkedTitle == note.title) return 0
+        val oldTitle = note.linkedTitle
         val oldKey = WikiLinks.key(oldTitle)
-        if (oldKey.isEmpty() || oldKey == WikiLinks.key(newTitle) || WikiLinks.key(newTitle).isEmpty()) return 0
-        if (dao.allRefs().any { it.id != noteId && WikiLinks.key(it.title) == oldKey }) return 0
+        val newKey = WikiLinks.key(note.title)
         var changed = 0
-        for (summary in dao.backlinks(listOf(oldKey), exclude = -1)) {
-            val note = dao.note(summary.id) ?: continue
-            val body = LinkRewriter.rename(note.body, oldTitle, newTitle) ?: continue
-            if (save(note.id, note.title, body) == SaveResult.SAVED) changed++
+        val othersHaveOldName = dao.allRefs().any { it.id != noteId && WikiLinks.key(it.title) == oldKey }
+        if (updateLinks && oldKey.isNotEmpty() && newKey.isNotEmpty() && oldKey != newKey && !othersHaveOldName) {
+            for (summary in dao.backlinks(listOf(oldKey), exclude = -1)) {
+                for (attempt in 1..5) {
+                    val linking = dao.note(summary.id) ?: break
+                    val body = LinkRewriter.rename(linking.body, oldTitle, note.title) ?: break
+                    when (save(linking.id, linking.title, body, expectedBody = linking.body)) {
+                        SaveResult.SAVED -> {
+                            changed++
+                            break
+                        }
+                        SaveResult.CONFLICT -> continue
+                        else -> break
+                    }
+                }
+            }
         }
+        dao.setLinkedTitle(noteId, note.title)
         return changed
     }
 
-    suspend fun setPinned(ids: Collection<Long>, pinned: Boolean) = dao.setPinned(ids, pinned)
+    /** Completes every rename still pending (after the app was stopped mid-way, say). */
+    suspend fun applyPendingRenames(updateLinks: Boolean): Int =
+        dao.pendingRenames().sumOf { applyRename(it.id, updateLinks) }
+
+    // SQLite before 3.32 (Android 8 to 11) allows at most 999 variables in a statement.
+    private suspend fun <T> inChunks(ids: Collection<Long>, action: suspend (List<Long>) -> T): List<T> =
+        ids.distinct().chunked(500).map { action(it) }
+
+    suspend fun notes(ids: Collection<Long>): List<NoteEntity> = inChunks(ids) { dao.notes(it) }.flatten()
+
+    suspend fun setPinned(ids: Collection<Long>, pinned: Boolean) {
+        db.withTransaction { inChunks(ids) { dao.setPinned(it, pinned) } }
+    }
 
     suspend fun move(ids: Collection<Long>, folder: String) {
         val path = FolderPaths.normalize(folder)
         db.withTransaction {
             if (path.isNotEmpty()) dao.insertFolder(FolderEntity(path, clock()))
-            dao.moveNotes(ids, path)
+            inChunks(ids) { dao.moveNotes(it, path) }
         }
     }
 
-    suspend fun moveToTrash(ids: Collection<Long>) = dao.setTrashed(ids, clock())
+    suspend fun moveToTrash(ids: Collection<Long>) {
+        val now = clock()
+        db.withTransaction { inChunks(ids) { dao.setTrashed(it, now) } }
+    }
 
-    suspend fun restore(ids: Collection<Long>) = dao.setTrashed(ids, null)
+    suspend fun restore(ids: Collection<Long>) {
+        db.withTransaction { inChunks(ids) { dao.setTrashed(it, null) } }
+    }
 
-    suspend fun deleteForever(ids: Collection<Long>) = dao.delete(ids)
+    suspend fun deleteForever(ids: Collection<Long>) {
+        db.withTransaction { inChunks(ids) { dao.delete(it) } }
+    }
 
-    suspend fun emptyTrash() = dao.delete(dao.trashedIds())
+    suspend fun emptyTrash() = deleteForever(dao.trashedIds())
 
     /** Deletes notes that have been in the trash longer than [TRASH_RETENTION_MS]. */
     suspend fun purgeOldTrash(): Int = dao.purgeTrash(clock() - TRASH_RETENTION_MS)
@@ -260,11 +318,10 @@ class NoteRepository(
         val old = FolderPaths.normalize(from)
         val new = FolderPaths.normalize(to)
         if (old.isEmpty() || new.isEmpty() || old == new || FolderPaths.isWithin(new, old)) return
-        val prefix = escapeLike(old) + "/%"
         db.withTransaction {
-            dao.renameNoteFolders(old, new, old.length, prefix)
+            dao.renameNoteFolders(old, new)
             val paths = dao.folders().map { it.path }.filter { FolderPaths.isWithin(it, old) }
-            dao.deleteFolderTree(old, prefix)
+            dao.deleteFolderTree(old)
             val now = clock()
             for (p in paths) dao.insertFolder(FolderEntity(new + p.substring(old.length), now))
             dao.insertFolder(FolderEntity(new, now))
@@ -275,17 +332,13 @@ class NoteRepository(
     suspend fun deleteFolder(path: String): Int {
         val p = FolderPaths.normalize(path)
         if (p.isEmpty()) return 0
-        val prefix = escapeLike(p) + "/%"
         return db.withTransaction {
-            val ids = dao.notesInFolderTree(p, prefix)
-            if (ids.isNotEmpty()) dao.setTrashed(ids, clock())
-            dao.deleteFolderTree(p, prefix)
+            val ids = dao.notesInFolderTree(p)
+            moveToTrash(ids)
+            dao.deleteFolderTree(p)
             ids.size
         }
     }
 
-    suspend fun countNotesIn(path: String): Int {
-        val p = FolderPaths.normalize(path)
-        return dao.notesInFolderTree(p, escapeLike(p) + "/%").size
-    }
+    suspend fun countNotesIn(path: String): Int = dao.notesInFolderTree(FolderPaths.normalize(path)).size
 }

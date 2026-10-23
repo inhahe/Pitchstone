@@ -50,6 +50,29 @@ class WikiLinksTest {
         assertThat(WikiLinks.linkName("My #1 [draft] | v2^")).isEqualTo("My 1 draft v2")
         assertThat(WikiLinks.key("  Mixed Case  ")).isEqualTo("mixed case")
     }
+
+    // The editor marks missing links with the same keys: editor/test/links.test.ts uses these.
+    @Test
+    fun `a note can be linked by its title and by every tail of its folder path`() {
+        assertThat(WikiLinks.lookupKeys("Plan", "Work/Sub")).containsExactly("plan", "work/sub/plan", "sub/plan").inOrder()
+        assertThat(WikiLinks.lookupKeys("Meeting 10/23", "Work")).containsExactly("meeting 10/23", "work/meeting 10/23")
+        assertThat(WikiLinks.lookupKeys("Top", "")).containsExactly("top", "/top")
+        assertThat(WikiLinks.lookupKeys("  ", "Work")).isEmpty()
+    }
+
+    @Test
+    fun `a folder link is looked up by its normalized path`() {
+        assertThat(WikiLinks.pathKey(" Work / Sub /Plan")).isEqualTo("work/sub/plan")
+        assertThat(WikiLinks.pathKey("/Top")).isEqualTo("/top")
+        assertThat(WikiLinks.pathKey("Plan")).isNull()
+        assertThat(WikiLinks.pathKey("Work/")).isNull()
+    }
+
+    @Test
+    fun `typed link targets keep their heading part`() {
+        assertThat(WikiLinks.cleanTarget(" Plan#Goals ")).isEqualTo("Plan#Goals")
+        assertThat(WikiLinks.cleanTarget("a[b]|c\nd")).isEqualTo("abcd")
+    }
 }
 
 class LinkRewriterTest {
@@ -64,6 +87,20 @@ class LinkRewriterTest {
     fun `keeps the table escape and the front matter`() {
         val md = "---\ntitle: [[Old]]\n---\n| [[Old\\|x]] |\n| --- |\n"
         assertThat(LinkRewriter.rename(md, "Old", "New")).isEqualTo("---\ntitle: [[Old]]\n---\n| [[New\\|x]] |\n| --- |\n")
+    }
+
+    @Test
+    fun `a title with a slash is renamed whole, and md suffixes stay`() {
+        val md = "[[Meeting 10/23]] [[Work/Meeting 10/23#Notes]] [[Meeting 10/23.md]] [[Other/23]]"
+        assertThat(LinkRewriter.rename(md, "Meeting 10/23", "Retro"))
+            .isEqualTo("[[Retro]] [[Work/Retro#Notes]] [[Retro.md]] [[Other/23]]")
+        assertThat(LinkRewriter.rename("[[Plan.md|p]]", "Plan", "Roadmap")).isEqualTo("[[Roadmap.md|p]]")
+    }
+
+    @Test
+    fun `carriage returns are normalized without shifting the text`() {
+        val md = "---\r\na: 1\r\n---\r\nx [[Old]]\r\n"
+        assertThat(LinkRewriter.rename(md, "Old", "New")).isEqualTo("---\na: 1\n---\nx [[New]]\n")
     }
 
     @Test
@@ -86,9 +123,9 @@ class NoteIndexerTest {
     }
 
     @Test
-    fun `links are indexed by note name`() {
-        val index = NoteIndexer.index("t", "[[Some Note#h]] [[folder/Other|x]] [[#local]]")
-        assertThat(index.links).containsExactly("some note", "other")
+    fun `links are indexed by whole name and by last part, without md`() {
+        val index = NoteIndexer.index("t", "[[Some Note#h]] [[folder/Other|x]] [[#local]] [[Plan.md]]")
+        assertThat(index.links).containsExactly("some note", "folder/other", "other", "plan")
     }
 
     @Test

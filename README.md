@@ -43,8 +43,10 @@ and stores each note as markdown.
 - **Reading view** (the book icon) shows the note without editing it; links open on tap and
   checkboxes can be ticked. **Markdown source** (⋮ menu) shows and edits the raw markdown.
 - **Links**: tap a link, note link, `#tag` or web address while editing and a bubble offers
-  *Open*, *Edit* and *Unlink*. Opening a link to a note that does not exist creates it. Note
-  links to missing notes are drawn with a dashed underline.
+  *Open*, *Edit* and *Unlink*. Opening a link to a note that does not exist creates it
+  (`[[Folder/Note]]` creates it in that folder). Note links to missing notes are drawn with a
+  dashed underline. `[[Note#Heading]]` and `[[Note#^block-id]]` open the note at that heading
+  or block, and `[[#Heading]]` jumps within the note.
 - **Find in note** (magnifier in the note): matches are highlighted, with next/previous.
 - The title of a new note has the keyboard; Enter moves on to the text.
 
@@ -63,12 +65,16 @@ and stores each note as markdown.
 
 ## Safety of your notes
 
-- Notes save themselves as you type, and again when you leave a note or switch apps.
+- Notes save themselves as you type, and again when you leave a note or switch apps. If a
+  save fails (the phone's storage is full, say), the note does not close: a dialog lets you try
+  again, stay and copy your text somewhere safe, or leave anyway.
 - **Version history** (⋮ → Version history): while you edit, the previous version of a note is
-  kept every 10 minutes (up to 60 versions, the oldest pruned after 90 days). Any version can be
-  restored; the current one is kept when you do.
+  kept every 10 minutes, and always right before you empty a note or delete more than half of
+  it (up to 60 versions, the oldest pruned after 90 days). Any version can be restored; the
+  current one is kept when you do.
 - **Trash**: deleted notes stay there for 30 days and can be restored. A note you empty by hand
-  goes to the trash rather than disappearing; only a new note you never typed in is discarded.
+  goes to the trash (with Undo) rather than disappearing; only a new note you never typed in is
+  discarded.
 - Notes are included in Android's backup (Google One / device transfer).
 - Opening a note never changes it: only your edits are saved.
 

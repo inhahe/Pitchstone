@@ -86,8 +86,8 @@ import app.inkdown.data.NoteSummary
 import app.inkdown.data.SortOrder
 import app.inkdown.ui.common.ConfirmDialog
 import app.inkdown.ui.common.Dates
+import app.inkdown.ui.common.FolderNameDialog
 import app.inkdown.ui.common.FolderPickerDialog
-import app.inkdown.ui.common.TextInputDialog
 import app.inkdown.ui.export.ExportDialog
 import app.inkdown.ui.export.ExportSource
 import app.inkdown.ui.export.defaultExportName
@@ -131,7 +131,9 @@ fun NotesScreen(onOpenNote: (Long) -> Unit, onSettings: () -> Unit, onTrash: () 
 
     LaunchedEffect(Unit) {
         container.listMessages.receiveAsFlow().collect { msg ->
-            val result = snackbar.showSnackbar(msg.text, actionLabel = msg.undoLabel, duration = SnackbarDuration.Short)
+            // A message with Undo stays long enough to reach for it.
+            val duration = if (msg.undoLabel != null) SnackbarDuration.Long else SnackbarDuration.Short
+            val result = snackbar.showSnackbar(msg.text, actionLabel = msg.undoLabel, duration = duration)
             if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
         }
     }
@@ -254,40 +256,26 @@ fun NotesScreen(onOpenNote: (Long) -> Unit, onSettings: () -> Unit, onTrash: () 
     }
 
     when (val d = dialog) {
-        is ListDialog.NewFolder -> TextInputDialog(
+        is ListDialog.NewFolder -> FolderNameDialog(
             title = if (d.parent.isEmpty()) "New folder" else "New folder in ${FolderPaths.name(d.parent)}",
-            label = "Folder name",
+            parent = d.parent,
+            existing = folders,
             confirmLabel = "Create",
-            validate = { name ->
-                val clean = FolderPaths.cleanName(name)
-                when {
-                    clean.isEmpty() -> "Enter a name"
-                    FolderPaths.child(d.parent, clean) in folders -> "That folder exists"
-                    else -> null
-                }
-            },
             onDismiss = { dialog = null },
         ) {
-            vm.createFolder(FolderPaths.child(d.parent, FolderPaths.cleanName(it)))
+            vm.createFolder(it)
             dialog = null
         }
-        is ListDialog.RenameFolder -> TextInputDialog(
+        is ListDialog.RenameFolder -> FolderNameDialog(
             title = "Rename folder",
-            label = "Folder name",
-            initial = FolderPaths.name(d.path),
+            parent = FolderPaths.parent(d.path),
+            existing = folders,
             confirmLabel = "Rename",
-            validate = { name ->
-                val clean = FolderPaths.cleanName(name)
-                val target = FolderPaths.child(FolderPaths.parent(d.path), clean)
-                when {
-                    clean.isEmpty() -> "Enter a name"
-                    target != d.path && target in folders -> "That folder exists"
-                    else -> null
-                }
-            },
+            initial = FolderPaths.name(d.path),
+            renaming = d.path,
             onDismiss = { dialog = null },
         ) {
-            vm.renameFolder(d.path, FolderPaths.cleanName(it))
+            vm.renameFolder(d.path, it)
             dialog = null
         }
         is ListDialog.DeleteFolder -> ConfirmDialog(

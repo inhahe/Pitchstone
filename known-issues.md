@@ -15,6 +15,9 @@
   (`a**.b**c`) loses that punctuation character's formatting; in pathological overlaps of
   several formats, one format run may be dropped. Nothing of the text is lost.
 - A line break at the very end of a paragraph is dropped.
+- **A `---` line inside the front matter** (Properties) ends it when the note is saved: YAML
+  front matter cannot contain such a line. The lines after it become part of the note's text
+  (nothing is lost, and the editor warns that the note could not be saved exactly).
 
 ## Not supported (yet)
 
@@ -23,8 +26,9 @@
 - **Raw HTML** is shown as source, not rendered (by choice: safety, and email output).
 - **Math** (`$…$`), **callouts** (`> [!note]`), **Mermaid**, and **inline footnotes** (`^[…]`)
   are kept as text, not rendered.
-- **Block references** (`[[Note#^id]]`) open the note, not the block. Heading links open the
-  note at its top.
+- **Heading and block links** (`[[Note#Heading]]`, `[[Note#^id]]`) scroll to the heading or
+  block in the editing and reading views, not in markdown source; one that matches nothing
+  opens the note at its top, without a message.
 - **Sync**: notes live on the phone (and in Android backup); export/import moves them.
 - **Tables**: cells hold one line of text (as in GitHub markdown); merged cells pasted from
   elsewhere are split when saved.
@@ -34,6 +38,12 @@
 - Email formatting depends on the mail app: Gmail shows bold, italic, links and lists from
   the formatted body; some apps show only the plain text. Attach the `.html` file for a
   faithful copy.
-- Links in other notes are updated after a rename when you leave the renamed note (or switch
-  apps), and only if no other note still has the old title.
+- Links in other notes are updated after a rename when you leave the renamed note (if the app
+  is stopped first, at its next start), and only if no other note still has the old title.
+- A link containing `/` may mean a title with a slash or a note in a folder: `[[Work/Plan]]`
+  finds a note titled "Work/Plan" first, then a note "Plan" in a folder Work. Tapping such a
+  link to a missing note creates "Plan" in the folder Work, as Obsidian does.
+- Folders whose names differ only in case ("Work" and "work") are separate folders in the app,
+  but are written to one folder when exported, as on most phone storage. The app does not let
+  you create such a pair.
 - Gboard's own autocorrect and capitalisation apply in the editor as in any text field.

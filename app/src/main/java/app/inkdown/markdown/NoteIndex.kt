@@ -49,7 +49,8 @@ object NoteIndexer {
             override fun visit(block: HtmlBlock) {}
             override fun visit(html: HtmlInline) {}
         })
-        val links = parsed.wikiLinks.map { WikiLinks.key(it.noteName.substringAfterLast('/')) }.filter { it.isNotEmpty() }.toSet()
+        // Under every name the link may mean: the whole name and, for folder/note, the note.
+        val links = parsed.wikiLinks.flatMap { WikiLinks.targetKeys(it.noteName) }.toSet()
         val plain = PlainText.render(parsed.document, underlineHeadings = false)
         // A first heading that repeats the title (common in imported notes) is not news in the list.
         val first = parsed.document.firstChild
@@ -121,25 +122,25 @@ object NoteIndexer {
 object LinkRewriter {
     /**
      * Points the wikilinks in [markdown] that lead to the note named [oldName] at [newName]
-     * instead, keeping any `#heading` part, alias and embed marker. Returns null if no link
-     * changed. Names are compared as [WikiLinks.key]s; `folder/name` targets keep their folder.
+     * instead, keeping any `#heading` part, alias, embed marker and `.md` suffix. A link whose
+     * whole name matches is renamed whole (titles may contain `/`); otherwise a `folder/name`
+     * link whose part after a `/` matches keeps its folder. Returns null if no link changed; the
+     * result has `\n` line endings.
      */
     fun rename(markdown: String, oldName: String, newName: String): String? {
         val oldKey = WikiLinks.key(oldName)
         val replacement = WikiLinks.linkName(newName)
         if (oldKey.isEmpty() || replacement.isEmpty()) return null
-        val split = Markdown.splitFrontMatter(markdown)
-        val head = markdown.length - split.body.length
-        val body = split.body
-        val links = Markdown.wikiLinks(body)
+        val source = Markdown.normalizeNewlines(markdown)
+        val body = Markdown.splitFrontMatter(source).body
+        val head = source.length - body.length
         val out = StringBuilder()
         var last = 0
         var changed = false
-        for (link in links) {
-            if (WikiLinks.key(link.noteName.substringAfterLast('/')) != oldKey) continue
-            // The target follows `[[` (and `!` for an embed). Only the name is replaced: the
-            // folder before it, a `#heading` after it, spacing, and the backslash of a
-            // table-safe `\|` all stay as written.
+        for (link in Markdown.wikiLinks(body)) {
+            // The target follows `[[` (and `!` for an embed). Only the name is replaced: what
+            // surrounds it (spacing, folder, `.md`, `#heading`, the backslash of a table-safe
+            // `\|`) stays as written.
             val targetStart = link.start + (if (link.embed) 1 else 0) + 2
             val inner = body.substring(targetStart, link.end - 2)
             val bar = inner.indexOf('|')
@@ -147,16 +148,25 @@ object LinkRewriter {
             if (bar >= 0 && rawTarget.endsWith('\\')) rawTarget = rawTarget.dropLast(1)
             val hash = rawTarget.indexOf('#')
             val notePart = if (hash >= 0) rawTarget.substring(0, hash) else rawTarget
-            val nameStart = notePart.lastIndexOf('/') + 1
-            val name = notePart.substring(nameStart)
-            val from = targetStart + nameStart + (name.length - name.trimStart().length)
-            val to = targetStart + nameStart + name.trimEnd().length
+            val lead = notePart.length - notePart.trimStart().length
+            val trimmed = notePart.trim()
+            val name = if (trimmed.endsWith(".md", ignoreCase = true)) trimmed.dropLast(3) else trimmed
+            val nameFrom = targetStart + lead
+            // The whole name, or the part after a `/` (see WikiLinks.targetKeys).
+            val start = if (WikiLinks.key(name) == oldKey) 0 else {
+                val slash = name.indices.firstOrNull { name[it] == '/' && WikiLinks.key(name.substring(it + 1)) == oldKey }
+                    ?: continue
+                val tail = name.substring(slash + 1)
+                slash + 1 + (tail.length - tail.trimStart().length)
+            }
+            val from = nameFrom + start
+            val to = nameFrom + name.length
             out.append(body, last, from).append(replacement)
             last = to
             changed = true
         }
         if (!changed) return null
         out.append(body, last, body.length)
-        return markdown.substring(0, head) + out
+        return source.substring(0, head) + out
     }
 }

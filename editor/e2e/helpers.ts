@@ -1,6 +1,7 @@
 import {expect, type Page} from '@playwright/test'
 import {pathToFileURL} from 'node:url'
 import {join} from 'node:path'
+import {linkKey} from '../src/editor/links'
 
 export const PAGE = pathToFileURL(join(import.meta.dirname, '..', 'dist-test', 'index.html')).href
 
@@ -11,22 +12,42 @@ export interface Flush {
   exact: boolean
 }
 
+/**
+ * Removes the web APIs that the oldest WebView the app supports (Chrome 90, the target in
+ * build.mjs) lacks: esbuild lowers syntax for it but adds no polyfills, so a call to one of
+ * these would throw on such a phone, and should throw in the tests too.
+ */
+function asChrome90() {
+  const drop = (owner: object, name: string) => {
+    delete (owner as Record<string, unknown>)[name]
+  }
+  drop(globalThis, 'structuredClone') // Chrome 98
+  drop(Object, 'hasOwn') // 93
+  drop(Array.prototype, 'at') // 92
+  drop(String.prototype, 'at') // 92
+  drop(Crypto.prototype, 'randomUUID') // 92
+  drop(Array.prototype, 'findLast') // 97
+  drop(Array.prototype, 'findLastIndex') // 97
+  for (const name of ['toSorted', 'toReversed', 'toSpliced', 'with']) drop(Array.prototype, name) // 110
+}
+
 export async function open(page: Page, markdown = '', opts: {shortcuts?: boolean; titles?: string[]; mode?: string} = {}) {
+  await page.addInitScript(asChrome90)
   await page.goto(PAGE)
   await page.evaluate(
-    ([markdown, shortcuts, titles, mode]) => {
+    ([markdown, shortcuts, titles, keys, mode]) => {
       window.inkdown.load(
         JSON.stringify({
           markdown,
           title: 'Test',
           mode,
           settings: {markdownShortcuts: shortcuts},
-          noteTitles: titles,
+          notes: {titles, keys},
           focus: 'end',
         }),
       )
     },
-    [markdown, opts.shortcuts ?? true, opts.titles ?? [], opts.mode ?? 'edit'] as const,
+    [markdown, opts.shortcuts ?? true, opts.titles ?? [], (opts.titles ?? []).map(linkKey), opts.mode ?? 'edit'] as const,
   )
   if ((opts.mode ?? 'edit') === 'edit') await page.locator('.ProseMirror').focus()
 }

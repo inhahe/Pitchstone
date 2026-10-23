@@ -30,14 +30,17 @@ object ExportWriter {
         val ours = HashMap<List<String>, MutableSet<String>>()
         files.forEachIndexed { index, file ->
             val display = (file.folder + "${file.baseName}.${file.extension}").joinToString("/")
+            // Folders are matched ignoring case (subdirectory() does, and so do FAT/exFAT
+            // cards), so "Work" and "work" share one directory and one set of names.
+            val key = file.folder.map { it.lowercase() }
             try {
-                val dir = dirs.getOrPut(file.folder) {
+                val dir = dirs.getOrPut(key) {
                     file.folder.fold(root) { d, name -> d.subdirectory(name) }
                 }
-                val entries = existing.getOrPut(file.folder) {
+                val entries = existing.getOrPut(key) {
                     dir.list().associateBy { it.name.lowercase() }.toMutableMap()
                 }
-                val mine = ours.getOrPut(file.folder) { HashSet() }
+                val mine = ours.getOrPut(key) { HashSet() }
                 val wanted = "${file.baseName}.${file.extension}"
                 val taken = entries.keys + mine
                 val mime = mimeTypeFor(file.extension)

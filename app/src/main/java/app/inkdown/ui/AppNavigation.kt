@@ -20,7 +20,7 @@ import kotlinx.serialization.Serializable
 object NotesRoute
 
 @Serializable
-data class NoteRoute(val id: Long)
+data class NoteRoute(val id: Long, val anchor: String? = null)
 
 @Serializable
 object SettingsRoute
@@ -51,8 +51,9 @@ fun AppNavigation(nav: NavHostController) {
             val route = entry.toRoute<NoteRoute>()
             EditorScreen(
                 noteId = route.id,
+                anchor = route.anchor,
                 onBack = { nav.popIfCurrent(entry) },
-                onOpenNote = { id -> if (nav.currentBackStackEntry?.id == entry.id) nav.navigate(NoteRoute(id)) },
+                onOpenNote = { id, anchor -> if (nav.currentBackStackEntry?.id == entry.id) nav.navigate(NoteRoute(id, anchor)) },
                 onShowTag = { tag ->
                     container.listRequests.value = ListRequest.ShowTag(tag)
                     nav.popBackStack(NotesRoute, inclusive = false)
