@@ -1,11 +1,11 @@
-// Entry point of the editor page. The app drives it through `window.inkdown`; every argument
+// Entry point of the editor page. The app drives it through `window.pitchstone`; every argument
 // that carries data is a JSON string, so no character can break out of the call.
 
 import {post, type Mode} from './editor/bridge'
-import {InkdownEditor, type LoadPayload, type NoteNames} from './editor/editor'
+import {PitchstoneEditor, type LoadPayload, type NoteNames} from './editor/editor'
 import type {EditorSettings} from './editor/settings'
 
-export interface InkdownApi {
+export interface PitchstoneApi {
   load(json: string): void
   setSettings(json: string): void
   /** The other notes (see NoteNames). */
@@ -26,13 +26,13 @@ export interface InkdownApi {
 
 declare global {
   interface Window {
-    inkdown: InkdownApi
+    pitchstone: PitchstoneApi
   }
 }
 
-const editor = new InkdownEditor(document.getElementById('app')!)
+const editor = new PitchstoneEditor(document.getElementById('app')!)
 
-window.inkdown = {
+window.pitchstone = {
   load: (json) => editor.load(JSON.parse(json) as LoadPayload),
   setSettings: (json) => editor.setSettings(JSON.parse(json) as Partial<EditorSettings>),
   setNotes: (json) => editor.setNotes(JSON.parse(json) as NoteNames),

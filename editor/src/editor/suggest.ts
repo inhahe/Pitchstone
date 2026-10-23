@@ -17,7 +17,7 @@ interface Query {
   to: number
 }
 
-export const suggestKey = new PluginKey<{dismissedAt: number}>('inkdown-suggest')
+export const suggestKey = new PluginKey<{dismissedAt: number}>('pitchstone-suggest')
 
 function queryAt(state: EditorState): Query | null {
   const sel = state.selection

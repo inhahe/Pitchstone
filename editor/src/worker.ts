@@ -1,4 +1,4 @@
-// Turns notes into markdown off the page's main thread, for autosave (InkdownEditor.emitChange):
+// Turns notes into markdown off the page's main thread, for autosave (PitchstoneEditor.emitChange):
 // on a long note serializing takes long enough to stall typing. It receives the document as
 // JSON and answers with its markdown, or with the error that stopped it.
 

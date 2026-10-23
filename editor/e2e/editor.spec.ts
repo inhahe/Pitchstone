@@ -200,7 +200,7 @@ test.describe('toolbar commands', () => {
 
   test('find marks the right text after characters whose lower case is longer', async ({page}) => {
     await open(page, 'İİ ab Ab\n')
-    await page.evaluate(() => window.inkdown.find('ab'))
+    await page.evaluate(() => window.pitchstone.find('ab'))
     await expect(page.locator('.ProseMirror .find-match')).toHaveText(['ab', 'Ab'])
   })
 
@@ -288,10 +288,10 @@ test.describe('saving', () => {
             Worker.prototype.postMessage = post
             post.apply(this, args)
             queueMicrotask(() => {
-              window.inkdown.command('insertWikilink', JSON.stringify({target: 'Newest'}))
-              const flushed = window.inkdown.flush()
-              const before = (window.__inkdownMessages ?? []).filter((m) => m.type === 'changed').length
-              window.inkdown.command('insertWikilink', JSON.stringify({target: 'After'}))
+              window.pitchstone.command('insertWikilink', JSON.stringify({target: 'Newest'}))
+              const flushed = window.pitchstone.flush()
+              const before = (window.__pitchstoneMessages ?? []).filter((m) => m.type === 'changed').length
+              window.pitchstone.command('insertWikilink', JSON.stringify({target: 'After'}))
               resolve({flushed, before})
             })
           } as Worker['postMessage']
@@ -311,7 +311,7 @@ test.describe('saving', () => {
     await page.keyboard.type('a')
     await page.evaluate(async () => {
       await new Promise((resolve) => setTimeout(resolve, 450))
-      window.inkdown.command('insertWikilink', JSON.stringify({target: 'Later'}))
+      window.pitchstone.command('insertWikilink', JSON.stringify({target: 'Later'}))
     })
     await expect.poll(async () => (await messages(page)).filter((m) => m.type === 'changed').at(-1)?.markdown).toContain('a[[Later]]')
     expect((await flush(page)).dirty).toBe(false)
@@ -329,13 +329,13 @@ test.describe('saving', () => {
 test.describe('modes', () => {
   test('source mode edits raw markdown', async ({page}) => {
     await open(page, '# A\n')
-    await page.evaluate(() => window.inkdown.setMode('source'))
+    await page.evaluate(() => window.pitchstone.setMode('source'))
     const source = page.locator('#source')
     await expect(source).toBeVisible()
     await expect(source).toHaveValue('# A\n')
     await source.fill('# B\n\n**x**\n')
     expect((await flush(page)).markdown).toBe('# B\n\n**x**\n')
-    await page.evaluate(() => window.inkdown.setMode('edit'))
+    await page.evaluate(() => window.pitchstone.setMode('edit'))
     await expect(page.locator('.ProseMirror h1')).toHaveText('B')
     await expect(page.locator('.ProseMirror strong')).toHaveText('x')
   })
@@ -365,7 +365,7 @@ test.describe('links into a note', () => {
   test('scroll to a heading or a block', async ({page}) => {
     const filler = Array.from({length: 80}, (_, i) => `Paragraph ${i}.`).join('\n\n')
     await open(page, `${filler}\n\n## Far: away\n\nA block ^blk-1\n\n${filler}\n`)
-    const scroll = (anchor: string) => page.evaluate((a) => window.inkdown.scrollToAnchor(a), anchor)
+    const scroll = (anchor: string) => page.evaluate((a) => window.pitchstone.scrollToAnchor(a), anchor)
     const top = (selector: string) => page.evaluate((s) => document.querySelector(s)!.getBoundingClientRect().top, selector)
     expect(await scroll('Top#Far away')).toBe(true)
     expect(Math.abs(await top('.ProseMirror h2'))).toBeLessThan(5)

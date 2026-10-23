@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Inkdown"
+rootProject.name = "Pitchstone"
 include(":app")

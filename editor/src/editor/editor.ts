@@ -84,7 +84,7 @@ export interface FlushResult {
 
 const SAVE_DELAY_MS = 400
 
-export class InkdownEditor {
+export class PitchstoneEditor {
   readonly view: EditorView
   private readonly title: HTMLTextAreaElement
   private readonly source: HTMLTextAreaElement

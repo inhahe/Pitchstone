@@ -68,11 +68,11 @@ val buildEditor = tasks.register<BuildEditorTask>("buildEditor") {
 val keystoreProperties = rootProject.file("keystore.properties")
 
 android {
-    namespace = "app.inkdown"
+    namespace = "app.pitchstone"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "app.inkdown"
+        applicationId = "app.pitchstone"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

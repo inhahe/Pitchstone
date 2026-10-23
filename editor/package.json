@@ -1,8 +1,8 @@
 {
-  "name": "inkdown-editor",
+  "name": "pitchstone-editor",
   "private": true,
   "version": "1.0.0",
-  "description": "The WYSIWYG markdown editor that runs inside the Inkdown Android app's WebView.",
+  "description": "The WYSIWYG markdown editor that runs inside the Pitchstone Notes Android app's WebView.",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",

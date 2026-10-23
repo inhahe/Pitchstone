@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Inkdown</string>
+    <string name="app_name">Pitchstone Notes</string>
+    <string name="launcher_name">Pitchstone</string>
     <string name="new_note">New note</string>
     <string name="import_note">Import note</string>
 </resources>

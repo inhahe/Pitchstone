@@ -30,4 +30,4 @@ if errorlevel 1 (
 )
 
 echo.
-echo Installed. Open "Inkdown" on the phone.
+echo Installed. Open "Pitchstone" on the phone.

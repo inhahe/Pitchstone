@@ -4,7 +4,7 @@ import {join} from 'node:path'
 import {linkKey} from '../src/editor/links'
 
 const DIST = join(import.meta.dirname, '..', 'dist-test')
-const ORIGIN = 'http://inkdown.test'
+const ORIGIN = 'http://pitchstone.test'
 /**
  * The page, served from an http origin (routed to dist-test) as the app serves it from its own:
  * a file:// page cannot start the autosave worker.
@@ -49,7 +49,7 @@ export async function open(
   await page.goto(opts.url ?? PAGE)
   await page.evaluate(
     ([markdown, shortcuts, titles, keys, mode]) => {
-      window.inkdown.load(
+      window.pitchstone.load(
         JSON.stringify({
           markdown,
           title: 'Test',
@@ -66,7 +66,7 @@ export async function open(
 }
 
 export async function flush(page: Page): Promise<Flush> {
-  return JSON.parse(await page.evaluate(() => window.inkdown.flush()))
+  return JSON.parse(await page.evaluate(() => window.pitchstone.flush()))
 }
 
 /** The note's markdown after the edits so far (flushes them). */
@@ -77,11 +77,11 @@ export async function markdown(page: Page): Promise<string> {
 }
 
 export async function messages(page: Page): Promise<{type: string; [k: string]: unknown}[]> {
-  return page.evaluate(() => (window.__inkdownMessages ?? []) as never)
+  return page.evaluate(() => (window.__pitchstoneMessages ?? []) as never)
 }
 
 export async function command(page: Page, name: string, args?: object) {
-  return page.evaluate(([n, a]) => window.inkdown.command(n, a ? JSON.stringify(a) : undefined), [name, args] as const)
+  return page.evaluate(([n, a]) => window.pitchstone.command(n, a ? JSON.stringify(a) : undefined), [name, args] as const)
 }
 
 /** Types text the way a soft keyboard with composition does: each word composed, then committed. */

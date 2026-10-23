@@ -1,14 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- An ink drop holding markdown's down-arrow mark. Drawn inside the 66dp safe zone. -->
+<!--
+    A cut pitchstone: a black volcanic glass, its facets lit from the top left, with a glint on
+    the top face. Drawn inside the 66dp safe zone of the 108dp adaptive icon.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M54,25 C54,25 34,49 34,63 A20,20 0 0,0 74,63 C74,49 54,25 54,25 Z" />
-    <path
-        android:fillColor="#FF4F378B"
-        android:pathData="M50,50 L58,50 L58,61 L64,61 L54,73 L44,61 L50,61 Z" />
+    <!-- Crown: left, top and right faces. -->
+    <path android:fillColor="#FF3E3D4A" android:pathData="M40,28 L46,46 L26,46 Z" />
+    <path android:fillColor="#FF555463" android:pathData="M40,28 L68,28 L62,46 L46,46 Z" />
+    <path android:fillColor="#FF2C2B36" android:pathData="M68,28 L82,46 L62,46 Z" />
+    <!-- Pavilion: left, middle and right faces. -->
+    <path android:fillColor="#FF24232C" android:pathData="M26,46 L46,46 L54,84 Z" />
+    <path android:fillColor="#FF18171E" android:pathData="M46,46 L62,46 L54,84 Z" />
+    <path android:fillColor="#FF0D0C11" android:pathData="M62,46 L82,46 L54,84 Z" />
+    <!-- Glint. -->
+    <path android:fillColor="#E6FFFFFF" android:pathData="M45,31 L54,31 L51,35 L43,35 Z" />
 </vector>

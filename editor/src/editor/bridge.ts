@@ -1,8 +1,8 @@
 // Messages from the editor to the Android app.
 //
-// The app injects `InkdownAndroid` (a JavascriptInterface) whose postMessage takes a JSON
+// The app injects `PitchstoneAndroid` (a JavascriptInterface) whose postMessage takes a JSON
 // string. Without it (tests, a desktop browser) messages are recorded in
-// `window.__inkdownMessages` and dispatched as `inkdown-message` events.
+// `window.__pitchstoneMessages` and dispatched as `pitchstone-message` events.
 
 export type OutMessage =
   | {type: 'ready'}
@@ -45,16 +45,16 @@ interface AndroidBridge {
 
 declare global {
   interface Window {
-    InkdownAndroid?: AndroidBridge
-    __inkdownMessages?: OutMessage[]
+    PitchstoneAndroid?: AndroidBridge
+    __pitchstoneMessages?: OutMessage[]
   }
 }
 
 export function post(message: OutMessage): void {
-  if (window.InkdownAndroid) {
-    window.InkdownAndroid.postMessage(JSON.stringify(message))
+  if (window.PitchstoneAndroid) {
+    window.PitchstoneAndroid.postMessage(JSON.stringify(message))
     return
   }
-  ;(window.__inkdownMessages ??= []).push(message)
-  window.dispatchEvent(new CustomEvent('inkdown-message', {detail: message}))
+  ;(window.__pitchstoneMessages ??= []).push(message)
+  window.dispatchEvent(new CustomEvent('pitchstone-message', {detail: message}))
 }

@@ -1,4 +1,4 @@
-# Inkdown
+# Pitchstone Notes
 
 A markdown note-taking app for Android, in the spirit of Obsidian: notes are markdown, linked
 with `[[wikilinks]]`, tagged with `#tags`, organised in folders, and easy to get out of the app
@@ -112,8 +112,8 @@ folder is skipped) or chosen files. `.md` files are read as markdown; `.txt` fil
 plain text by default (their symbols stay literal), or read as markdown if you choose. Folder
 structure can be kept. Importing the same files again does not create duplicates.
 
-Text shared to Inkdown from another app becomes a new note, and markdown files opened with
-Inkdown are imported.
+Text shared to Pitchstone from another app becomes a new note, and markdown files opened with
+Pitchstone are imported.
 
 ## Markdown details
 
@@ -136,7 +136,7 @@ links. Notes you only open are never rewritten. See `known-issues.md` for the de
 3. In this folder, run `install-on-phone.bat` (it builds the release version and installs it).
 
 To update later, run the same script: notes are kept. **Back up
-`C:\Users\Computer\.android\inkdown-release.jks` and `keystore.properties`**: Android only
+`C:\Users\Computer\.android\pitchstone-release.jks` and `keystore.properties`**: Android only
 accepts an update signed with the same key, and installing differently signed builds means
 uninstalling first, which deletes the notes on the phone (export them first).
 
@@ -146,7 +146,7 @@ Requirements: JDK 17+ (`JAVA_HOME`), the Android SDK (`local.properties` → `sd
 Node.js on `PATH` (the editor is TypeScript, bundled by the Gradle build).
 
 ```
-gradlew assembleDebug          # app/build/outputs/apk/debug, package app.inkdown.debug
+gradlew assembleDebug          # app/build/outputs/apk/debug, package app.pitchstone.debug
 gradlew assembleRelease        # signed if keystore.properties exists
 gradlew testDebugUnitTest      # Kotlin tests (JVM and Robolectric)
 cd editor && npm test          # markdown round-trip, CommonMark spec, fuzzer
@@ -156,9 +156,9 @@ cd editor && npm run test:e2e  # editor in Chromium: typing, IME composition, co
 `keystore.properties` (not in git) names the release key:
 
 ```
-storeFile=C:/Users/Computer/.android/inkdown-release.jks
+storeFile=C:/Users/Computer/.android/pitchstone-release.jks
 storePassword=…
-keyAlias=inkdown
+keyAlias=pitchstone
 keyPassword=…
 ```
 

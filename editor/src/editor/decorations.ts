@@ -23,7 +23,7 @@ export interface DecorationState {
   matches: {from: number; to: number}[]
 }
 
-export const decorationsKey = new PluginKey<DecorationState>('inkdown-decorations')
+export const decorationsKey = new PluginKey<DecorationState>('pitchstone-decorations')
 
 type Meta = {keys?: string[]; query?: string; current?: number}
 

@@ -1,4 +1,4 @@
-# Inkdown: design
+# Pitchstone Notes: design
 
 An Android markdown notes app: a Kotlin/Jetpack Compose app around a WYSIWYG editor that runs
 in a WebView. User-facing behaviour is in `README.md`; known limitations in `known-issues.md`.
@@ -12,11 +12,11 @@ editor/                  The editor page (TypeScript, ProseMirror, markdown-it)
   src/editor/            Interactive layer: editor.ts (page controller), rules.ts (shortcuts),
                          commands.ts, keymap in editor.ts, decorations.ts, bubble.ts,
                          suggest.ts, views.ts, plugins.ts, bridge.ts, settings.ts
-  src/main.ts            window.inkdown API for the app
+  src/main.ts            window.pitchstone API for the app
   test/                  vitest: round trips, CommonMark spec corpus, fuzzer (+ shrinker)
   e2e/                   Playwright (Chromium, Pixel 7 emulation): typing, IME, commands
   build.mjs              esbuild bundle -> <out>/{index.html, editor.js, *.css}
-app/                     The Android app (package app.inkdown)
+app/                     The Android app (package app.pitchstone)
   data/                  Room: entities, DAO, AppDatabase; NoteRepository; Settings (DataStore)
   markdown/              commonmark-java in the editor's dialect: Markdown, WikiLinks,
                          PlainText, Html, NoteIndexer, LinkRewriter
@@ -100,7 +100,7 @@ documents pass.
 
 ### Bridge (app <-> page)
 
-The app calls `window.inkdown.*` with JSON-string arguments (`EditorWebView.call`):
+The app calls `window.pitchstone.*` with JSON-string arguments (`EditorWebView.call`):
 `load(payload)`, `setSettings`, `setNotes({titles, keys})`, `setMode`, `command(name, args)`,
 `flush()` (returns the pending change synchronously as JSON and marks it reported; if the
 change cannot be turned into markdown it stays pending and the result carries `error`),
@@ -109,7 +109,7 @@ change cannot be turned into markdown it stays pending and the result carries `e
 If `load` cannot parse a note, it opens in source mode over an empty stand-in document that is
 never shown or saved: leaving source mode always re-parses, and stays in source mode on failure.
 
-The page posts JSON to `InkdownAndroid.postMessage` (`bridge.ts` `OutMessage`): `ready`,
+The page posts JSON to `PitchstoneAndroid.postMessage` (`bridge.ts` `OutMessage`): `ready`,
 `changed {markdown, title, exact, seq}` (400 ms after the last edit, on blur, on page hide),
 `state {toolbar state}`, `openLink`, `openNote`, `openTag`, `editLink`, `editWikilink`,
 `modeChanged`, `findResult`, `warning` (`parseFailed`, `sourceParseFailed`, `serializeFailed`
@@ -157,7 +157,7 @@ history.
 
 ## Data
 
-Room database `inkdown.db` (WAL), schema exported to `app/schemas`:
+Room database `pitchstone.db` (WAL), schema exported to `app/schemas`:
 
 - `notes`: id, title, body (markdown), folder path, created/updated, pinned, trashedAt,
   `searchText` (lower-cased title + plain text), `snippet`.

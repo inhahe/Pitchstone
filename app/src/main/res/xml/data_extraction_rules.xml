@@ -2,15 +2,15 @@
 <!-- Android 12+: notes and settings go to cloud backup and to a new phone. -->
 <data-extraction-rules>
     <cloud-backup>
-        <include domain="database" path="inkdown.db" />
-        <include domain="database" path="inkdown.db-wal" />
-        <include domain="database" path="inkdown.db-shm" />
+        <include domain="database" path="pitchstone.db" />
+        <include domain="database" path="pitchstone.db-wal" />
+        <include domain="database" path="pitchstone.db-shm" />
         <include domain="file" path="datastore/settings.preferences_pb" />
     </cloud-backup>
     <device-transfer>
-        <include domain="database" path="inkdown.db" />
-        <include domain="database" path="inkdown.db-wal" />
-        <include domain="database" path="inkdown.db-shm" />
+        <include domain="database" path="pitchstone.db" />
+        <include domain="database" path="pitchstone.db-wal" />
+        <include domain="database" path="pitchstone.db-shm" />
         <include domain="file" path="datastore/settings.preferences_pb" />
     </device-transfer>
 </data-extraction-rules>
