@@ -43,7 +43,9 @@
   the formatted body; some apps show only the plain text. Attach the `.html` file for a
   faithful copy.
 - Links in other notes are updated after a rename when you leave the renamed note (if the app
-  is stopped first, at its next start), and only if no other note still has the old title.
+  is stopped first, at its next start), and only if no other note still has the old title. A
+  note you are typing in at that moment keeps your typing, and with it the old link: update
+  that one by hand (or rename the note back and forth).
 - A link containing `/` may mean a title with a slash or a note in a folder: `[[Work/Plan]]`
   finds a note titled "Work/Plan" first, then a note "Plan" in a folder Work. Tapping such a
   link to a missing note creates "Plan" in the folder Work, as Obsidian does.
