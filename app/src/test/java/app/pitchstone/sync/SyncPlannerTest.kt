@@ -135,18 +135,44 @@ class SyncPlannerTest {
     @Test
     fun `a file moved into a folder left out is followed, and that folder is listed only then`() {
         val pairs = listOf(pair("A.md", 1, "text", 50))
-        val leftOut = Folder("Archive/A.md" to ("text" to 60L))
+        // Moved, the file keeps its time.
+        val leftOut = Folder("Archive/B.md" to ("text" to 50L))
         var listed = 0
         fun outside(): List<VaultFile> {
             listed++
             return leftOut.list
         }
         val plan = SyncPlanner.plan(emptyList(), listOf(note(1, "A", "text")), pairs, leftOut::hash, ::outside)
-        assertThat(plan).containsExactly(Adopt(1, "A.md", "Archive/A.md", writeNote = false))
+        assertThat(plan).containsExactly(Adopt(1, "A.md", "Archive/B.md", writeNote = false))
         assertThat(listed).isEqualTo(1)
+        // Edited in the app meanwhile: the app's text goes to the moved file.
+        assertThat(SyncPlanner.plan(emptyList(), listOf(note(1, "A", "edited")), pairs, leftOut::hash, ::outside))
+            .containsExactly(Adopt(1, "A.md", "Archive/B.md", writeNote = true))
         // Nothing gone: the folders left out are not looked into.
+        val before = listed
         SyncPlanner.plan(Folder("A.md" to ("text" to 50L)).list, listOf(note(1, "A", "text")), pairs, leftOut::hash, ::outside)
-        assertThat(listed).isEqualTo(1)
+        assertThat(listed).isEqualTo(before)
+    }
+
+    @Test
+    fun `a file of the same text there from before is not taken for one moved into a folder left out`() {
+        // A note made from a template, its file deleted: the template has its own time.
+        val pairs = listOf(pair("A.md", 1, "text", 50))
+        val leftOut = Folder("Templates/T.md" to ("text" to 10L))
+        val plan = SyncPlanner.plan(emptyList(), listOf(note(1, "A", "edited")), pairs, leftOut::hash, { leftOut.list })
+        assertThat(plan.filterIsInstance<Adopt>()).isEmpty()
+    }
+
+    @Test
+    fun `a file moved into a folder left out and edited on the way is followed by its name, and not written over`() {
+        val pairs = listOf(pair("A.md", 1, "text", 50))
+        val leftOut = Folder("Archive/A.md" to ("text, edited on the way" to 70L))
+        val plan = SyncPlanner.plan(emptyList(), listOf(note(1, "A", "edited here too")), pairs, leftOut::hash, { leftOut.list })
+        assertThat(plan).containsExactly(Adopt(1, "A.md", "Archive/A.md", writeNote = false))
+        // Two of that name: neither is taken for it.
+        val two = Folder("Archive/A.md" to ("one" to 70L), "Old/A.md" to ("two" to 70L))
+        assertThat(SyncPlanner.plan(emptyList(), listOf(note(1, "A", "text")), pairs, two::hash, { two.list }))
+            .containsExactly(TrashNote(1, "A.md"))
     }
 
     @Test

@@ -12,9 +12,13 @@ import app.pitchstone.export.find
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
+import kotlinx.serialization.json.JsonNames
 
 /** What one sync did, for the status line and the messages after it. */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class SyncReport(
     val at: Long,
@@ -30,8 +34,8 @@ data class SyncReport(
     val trashedNotes: Int = 0,
     /** Files moved to the folder's `.trash` because their notes left the app. */
     val trashedFiles: Int = 0,
-    /** Attachments (pictures, PDFs...) copied either way. */
-    val attachments: Int = 0,
+    /** Attachments (pictures, PDFs...) copied either way. Saved as "pictures" before they were all synced. */
+    @JsonNames("pictures") val attachments: Int = 0,
     /**
      * Notes whose files were deleted from the folder but which were left alone, because so
      * many at once may be a mistake (a folder emptied, a card not mounted): see [GoneFiles].
@@ -41,6 +45,8 @@ data class SyncReport(
     val conflicts: List<String> = emptyList(),
     /** "path: why" for each file that could not be synced this time (it is tried again next time). */
     val problems: List<String> = emptyList(),
+    /** The folders the sync wrote into, lower-cased ([Vault.touched]): for [FolderWatcher], not kept. */
+    @Transient val wroteIn: Set<String> = emptySet(),
 ) {
     val changes: Int get() = written + updated + imported + renamed + trashedNotes + trashedFiles + attachments
 }
@@ -94,6 +100,18 @@ class FolderSync(
 
         private const val TAG = "Pitchstone"
         private const val MIME = "application/octet-stream"
+
+        /** "Title (2).md", "Title (3).md"... whichever is free in [dir], as a clash numbers a note's file. */
+        private fun numbered(name: String, dir: DocumentDir): String {
+            val base = name.substringBeforeLast('.')
+            val ext = name.substringAfterLast('.', "")
+            var n = 2
+            while (true) {
+                val candidate = "$base ($n)" + if (ext.isEmpty()) "" else ".$ext"
+                if (dir.find(candidate) == null) return candidate
+                n++
+            }
+        }
 
         /** "name 1.ext", "name 2.ext"... whichever is free in both [a] and [b]. */
         private fun freeName(name: String, a: DocumentDir, b: DocumentDir): String {
@@ -264,6 +282,7 @@ class FolderSync(
 
         /** Writes [text] to the file at [path]: a new file if [create], else over the one listed (unless it changed since). */
         fun write(path: String, text: String, create: Boolean) {
+            vault.touch(path.substringBeforeLast('/', ""))
             val bytes = text.toByteArray(Charsets.UTF_8)
             val existing = vault.note(path)
             if (!create && existing != null) {
@@ -292,6 +311,8 @@ class FolderSync(
 
         /** Moves the file at [from] to [to] (not taken); returns where it is now. */
         fun move(from: String, to: String): String {
+            vault.touch(from.substringBeforeLast('/', ""))
+            vault.touch(to.substringBeforeLast('/', ""))
             val f = located(from)
             val folder = to.substringBeforeLast('/', "")
             val name = to.substringAfterLast('/')
@@ -305,7 +326,11 @@ class FolderSync(
                 dir = target
             }
             // Not for case alone: providers on case-blind storage would number the name instead.
-            if (!entry.name.equals(name, ignoreCase = true)) entry = dir.rename(entry, name)
+            if (!entry.name.equals(name, ignoreCase = true)) {
+                // A folder left out of sync was not listed: a file there may have the name.
+                val free = if (vault.excluded.contains(to) && dir.find(name) != null) numbered(name, dir) else name
+                if (!entry.name.equals(free, ignoreCase = true)) entry = dir.rename(entry, free)
+            }
             vault.remove(from)
             val actual = joinPath(folder, entry.name)
             vault.put(Located(actual, dir, entry))
@@ -314,6 +339,7 @@ class FolderSync(
 
         /** Moves the file at [path] to the folder's `.trash`, as Obsidian does (numbered if its name is taken there). */
         fun trash(path: String) {
+            vault.touch(path.substringBeforeLast('/', ""))
             val f = located(path)
             var entry = f.entry
             if (trashDir.find(entry.name) != null) entry = f.dir.rename(entry, freeName(entry.name, f.dir, trashDir))
@@ -457,7 +483,7 @@ class FolderSync(
             problems.putIfAbsent("Attachments", describe(e))
             0
         }
-        r.copy(attachments = copied, conflicts = conflicts, problems = problems.map { (path, why) -> "$path: $why" })
+        r.copy(attachments = copied, conflicts = conflicts, problems = problems.map { (path, why) -> "$path: $why" }, wroteIn = vault.touched)
     }
 
     private fun SyncAction.path(): String = when (this) {

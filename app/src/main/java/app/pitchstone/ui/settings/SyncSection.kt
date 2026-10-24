@@ -78,7 +78,7 @@ fun SyncSection(folderUri: String?, excluded: Set<String>) {
                 if (choosing == uri && choosingExcluded == leftOut) preview = p
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                if (choosing == uri) previewError = e.message ?: e.javaClass.simpleName
+                if (choosing == uri && choosingExcluded == leftOut) previewError = e.message ?: e.javaClass.simpleName
             }
         }
     }
@@ -267,7 +267,8 @@ private fun leftOutText(excluded: Set<String>) =
 
 /**
  * Chooses the folders to leave out of sync among those [load] lists ("Archive", "Archive/2020"),
- * starting from [initial]. A folder inside one left out is left out with it.
+ * starting from [initial]. A folder inside one left out is left out with it. One of [initial]
+ * the folder no longer has (renamed, deleted) is listed after the others, to be taken back.
  */
 @Composable
 private fun FoldersDialog(load: suspend () -> List<String>, initial: Set<String>, onDone: (Set<String>) -> Unit, onDismiss: () -> Unit) {
@@ -288,15 +289,17 @@ private fun FoldersDialog(load: suspend () -> List<String>, initial: Set<String>
                     Text("  Looking at the folder…")
                 }
                 result.isFailure -> Text("The folder could not be read: ${result.exceptionOrNull()?.message}")
-                result.getOrThrow().isEmpty() -> Text("This folder has no folders in it.")
+                result.getOrThrow().isEmpty() && initial.isEmpty() -> Text("This folder has no folders in it.")
                 else -> Column {
+                    val listed = result.getOrThrow()
+                    val gone = initial.filter { left -> listed.none { it.equals(left, ignoreCase = true) } }.sortedWith(String.CASE_INSENSITIVE_ORDER)
                     Text(
                         "Their notes stay as they are on both sides, and are not kept in step.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     LazyColumn(Modifier.heightIn(max = 360.dp).padding(top = 8.dp)) {
-                        items(result.getOrThrow()) { path ->
+                        items(listed + gone) { path ->
                             val implied = underChosen(path)
                             val depth = path.count { it == '/' }
                             Row(
@@ -314,7 +317,10 @@ private fun FoldersDialog(load: suspend () -> List<String>, initial: Set<String>
                                     .padding(start = (depth * 20).dp),
                             ) {
                                 Checkbox(checked = implied || isChosen(path), onCheckedChange = null, enabled = !implied)
-                                Text(path.substringAfterLast('/'), modifier = Modifier.padding(start = 8.dp))
+                                Text(
+                                    if (path in gone) "$path (not in the folder now)" else path.substringAfterLast('/'),
+                                    modifier = Modifier.padding(start = 8.dp),
+                                )
                             }
                         }
                     }

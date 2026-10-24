@@ -468,6 +468,95 @@ class FolderSyncTest {
     }
 
     @Test
+    fun `a template left out is not mistaken for a note's file, nor written over`() = runBlocking<Unit> {
+        val leftOut = setOf("Templates")
+        put("Templates/Meeting.md", "# Meeting\n")
+        val id = repo.create("Monday", "# Meeting\n")
+        sync(excluded = leftOut)
+        // Its file deleted outside, while edited here: the note's file is written again.
+        assertThat(file("Monday.md").delete()).isTrue()
+        repo.save(id, "Monday", "# Meeting\n\nNotes")
+        sync(excluded = leftOut)
+        assertThat(file("Templates/Meeting.md").readText()).isEqualTo("# Meeting\n")
+        assertThat(repo.note(id)!!.title).isEqualTo("Monday")
+        assertThat(repo.note(id)!!.folder).isEqualTo("")
+        assertThat(file("Monday.md").readText()).isEqualTo("# Meeting\n\nNotes")
+    }
+
+    @Test
+    fun `a file moved into a folder left out and edited there still takes its note along`() = runBlocking<Unit> {
+        val leftOut = setOf("Archive")
+        val id = repo.create("Done", "finished")
+        sync(excluded = leftOut)
+        put("Archive/Done.md", "finished, and a last line")
+        assertThat(file("Done.md").delete()).isTrue()
+        val report = sync(excluded = leftOut)
+        assertThat(report.trashedNotes).isEqualTo(0)
+        assertThat(repo.note(id)!!.trashedAt).isNull()
+        assertThat(repo.note(id)!!.folder).isEqualTo("Archive")
+        // Neither text is written over the other.
+        assertThat(repo.note(id)!!.body).isEqualTo("finished")
+        assertThat(file("Archive/Done.md").readText()).isEqualTo("finished, and a last line")
+    }
+
+    @Test
+    fun `a folder left out is matched however its name is spelled on either side`() = runBlocking<Unit> {
+        // Two spaces in the vault's name; the app's folder of that name is the same folder.
+        put("Work  2024/Old.md", "old")
+        sync()
+        assertThat(note("Old").folder).isEqualTo("Work  2024")
+        repo.create("New", "new", folder = "Work  2024")
+        val report = sync(excluded = setOf("Work  2024"))
+        assertThat(report.written).isEqualTo(0)
+        assertThat(File(vault, "Work 2024").exists()).isFalse()
+        // Saved with a stray space, it still matches.
+        put("Archive/A.md", "a")
+        assertThat(sync(excluded = setOf("Archive ", "Work  2024")).imported).isEqualTo(0)
+    }
+
+    @Test
+    fun `attachments only notes left out link to are not synced`() = runBlocking<Unit> {
+        val logo = store.add(byteArrayOf(1).inputStream(), "logo.png")
+        repo.create("Daily", "![[$logo]]", folder = "Templates")
+        put("Templates/Weekly.md", "![[banner.png]]")
+        putBytes("banner.png", byteArrayOf(2))
+        sync(excluded = setOf("Templates"))
+        assertThat(file("logo.png").exists()).isFalse()
+        assertThat(store.file("banner.png")).isNull()
+    }
+
+    @Test
+    fun `a note moved into a folder left out where its name is taken gets a numbered file`() = runBlocking<Unit> {
+        val leftOut = setOf("Archive")
+        put("Archive/Done.md", "an older Done")
+        val id = repo.create("Done", "finished")
+        sync(excluded = leftOut)
+        repo.move(listOf(id), "Archive")
+        val report = sync(excluded = leftOut)
+        assertThat(report.problems).isEmpty()
+        assertThat(file("Archive/Done.md").readText()).isEqualTo("an older Done")
+        assertThat(file("Archive/Done (2).md").readText()).isEqualTo("finished")
+        assertThat(sync(excluded = leftOut).changes).isEqualTo(0)
+    }
+
+    @Test
+    fun `an attachment whose name has a # in it is stored under it, and copied once`() = runBlocking<Unit> {
+        put("Bills.md", "[Invoice](Invoice%20%2342.pdf)")
+        putBytes("Invoice #42.pdf", byteArrayOf(4, 2))
+        val first = sync()
+        assertThat(first.problems).isEmpty()
+        assertThat(first.attachments).isEqualTo(1)
+        assertThat(store.file("Invoice #42.pdf")!!.readBytes()).isEqualTo(byteArrayOf(4, 2))
+        assertThat(sync().changes).isEqualTo(0)
+    }
+
+    @Test
+    fun `a report saved before every kind of attachment was synced keeps its count`() {
+        val old = Json { ignoreUnknownKeys = true }.decodeFromString(SyncReport.serializer(), """{"at":1,"pictures":2}""")
+        assertThat(old.attachments).isEqualTo(2)
+    }
+
+    @Test
     fun `the folders of the synced folder are listed for leaving out, hidden ones not`() = runBlocking<Unit> {
         put(".obsidian/app.json", "{}")
         put("B/Inner/x.md", "x")

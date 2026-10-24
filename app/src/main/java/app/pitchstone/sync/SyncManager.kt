@@ -174,6 +174,7 @@ class SyncManager(
     /** Leaves the folders [excluded] out of sync from now on (their notes stay as they are on both sides). */
     suspend fun setExcluded(excluded: Set<String>) {
         settings.update { it.copy(syncExcluded = excluded) }
+        watch()
         requestSync()
     }
 
@@ -201,17 +202,19 @@ class SyncManager(
             _status.update { it.copy(error = null) }
         }
         schedule()
+        watch()
         syncNow()
     }
 
     /** Stops syncing. The notes and the files stay as they are. */
     suspend fun stop() {
-        watcher.stop()
         WorkManager.getInstance(context).cancelUniqueWork(WORK_PERIODIC)
         WorkManager.getInstance(context).cancelUniqueWork(WORK_SOON)
         lock.withLock {
             val old = settings.current().syncFolderUri
             settings.update { it.copy(syncFolderUri = null, syncExcluded = emptySet()) }
+            // After any sync running, and once no folder is set, so that nothing watches again.
+            watcher.stop()
             entries.clear()
             if (old != null) releasePermission(old)
             prefs.edit().remove(KEY_REPORT).remove(KEY_CHANGE).remove(KEY_ERROR).apply()
@@ -237,10 +240,14 @@ class SyncManager(
         val s = settings.current()
         val uri = s.syncFolderUri ?: return@withLock null
         _status.update { it.copy(running = true) }
+        // What the folder announces meanwhile may be this sync's own writes.
+        watcher.hold()
+        var wroteIn = emptySet<String>()
         // A sync stopped midway (WorkManager cancelling it) must not leave "Syncing…" up.
         try {
             val root = SafDir.root(context.contentResolver, Uri.parse(uri))
             val report = engine.sync(root, s.updateLinksOnRename, excluded = s.syncExcluded, busy = { open.containsKey(it) }, gone = gone)
+            wroteIn = report.wroteIn
             val before = _status.value.last
             val changed = report.changes > 0 || report.conflicts.isNotEmpty()
             val lastChange = if (changed) report else _status.value.lastChange
@@ -251,8 +258,6 @@ class SyncManager(
             }.apply()
             _status.value = SyncStatus(last = report, lastChange = lastChange)
             announce(report, before)
-            // Folders may have come or gone.
-            watch()
             report
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -266,6 +271,7 @@ class SyncManager(
             _status.update { it.copy(running = false, error = why) }
             null
         } finally {
+            watcher.release(wroteIn)
             _status.update { it.copy(running = false) }
         }
     }

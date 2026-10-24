@@ -68,7 +68,8 @@
   cloud app's), and any folder while Pitchstone is in the background, syncs when Pitchstone
   comes to the front, or within about 15 minutes, when Android lets background work run
   (battery saver and Doze can postpone it). Sync now in Settings does it at once. Only the
-  first 300 folders are watched.
+  first 300 folders are watched, and a change another app makes in a folder at the moment
+  Pitchstone writes into that same folder may wait for the next sync.
 - **A note's title is its file name.** Characters files cannot hold (`/ \ : * ? " < > |`)
   become spaces in the name ("Client/Server" is `Client Server.md`, which Obsidian's
   `[[Client/Server]]` would not find), and a note made from a file takes the file's name.
@@ -88,8 +89,11 @@
   is never deleted by a sync, and one deleted from the folder comes back while a note still
   links to it. One over 100 MB is not stored (Settings lists it). A file no note links to is not
   synced, nor is one in a hidden folder or a folder left out.
-- **A note moved into a folder left out** whose name is taken there by a file of the vault
-  cannot follow: Settings lists it, and it is tried again at each sync. Rename one of them.
+- **A file moved into a folder left out** is recognised by its text and time, or, edited on the
+  way, as the only file of its name there. So a note whose file is deleted while a file of the
+  same name sits in a left-out folder moves into that folder (left alone there) rather than to
+  the trash. A note moved into a left-out folder where its name is taken gets a numbered file
+  there, `Title (2).md`.
 - A folder in the vault whose name the app spells otherwise ("Q&A: misc" is `Q&A misc`, a
   colon being something files cannot hold) is the app's folder of that spelling; a folder
   made in the vault takes the vault's spelling.

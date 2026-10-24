@@ -137,15 +137,17 @@ class AttachmentStore(
     /**
      * Stores [input] as a new attachment named after [preferredName] ("photo.jpg"), made a
      * valid file name and unique ignoring case ("photo 1.jpg"). Returns the name to write in
-     * the note. Throws [AttachmentTooLargeException] past [MAX_BYTES], counted as it is read.
+     * the note. With [forWikilink] (a picture the app embeds itself, `![[name]]`), the name has
+     * none of the `[ ] | # ^` that would break that. Throws [AttachmentTooLargeException] past
+     * [MAX_BYTES], counted as it is read.
      */
-    suspend fun add(input: InputStream, preferredName: String): String = withContext(Dispatchers.IO) {
+    suspend fun add(input: InputStream, preferredName: String, forWikilink: Boolean = true): String = withContext(Dispatchers.IO) {
         val incoming = File(dir, ".incoming").apply { mkdirs() }
         val tmp = File.createTempFile("add", ".tmp", incoming)
         try {
             val size = copyLimited(input, tmp)
             naming.withLock {
-                val name = uniqueName(preferredName)
+                val name = uniqueName(preferredName, forWikilink)
                 if (!tmp.renameTo(File(dir, name))) error("Could not store $name")
                 dao.insert(AttachmentEntity(name, size, clock()))
                 name
@@ -158,7 +160,8 @@ class AttachmentStore(
     /**
      * Stores [input] as [name], unless an attachment named so (or as a unique variant of it,
      * "name 1.png") holds the same bytes already: then that one is used. Returns the name
-     * stored under, which notes then mention (for an import: importing twice stores once).
+     * stored under, which notes then mention (for an import: importing twice stores once). The
+     * name is kept as notes there write it (`[Invoice #42](Invoice%20%2342.pdf)`), `#` and all.
      */
     suspend fun addOrReuse(input: InputStream, name: String): String = withContext(Dispatchers.IO) {
         val incoming = File(dir, ".incoming").apply { mkdirs() }
@@ -166,13 +169,13 @@ class AttachmentStore(
         try {
             copyLimited(input, tmp)
             val ext = name.substringAfterLast('.', "")
-            val stem = Regex.escape(safeStem(if (ext.isEmpty()) name else name.substringBeforeLast('.')))
+            val stem = Regex.escape(safeStem(if (ext.isEmpty()) name else name.substringBeforeLast('.'), forWikilink = false))
             val variants = Regex(stem + "( \\d+)?" + (if (ext.isEmpty()) "" else "\\." + Regex.escape(ext)), RegexOption.IGNORE_CASE)
             val tmpDigest by lazy { digest(tmp) }
             val same = dir.listFiles()?.firstOrNull { f ->
                 f.isFile && variants.matches(f.name) && f.length() == tmp.length() && digest(f) == tmpDigest
             }
-            same?.name ?: add(tmp.inputStream(), name)
+            same?.name ?: add(tmp.inputStream(), name, forWikilink = false)
         } finally {
             tmp.delete()
         }
@@ -218,15 +221,16 @@ class AttachmentStore(
     private fun digest(file: File): String = Sha256.of(file.inputStream())
 
     /**
-     * [stem] as a file name that a wikilink can name too: valid on every file system
-     * ([FileNames.safe]), and without `[ ] | # ^`, which end or split a `![[name]]`.
+     * [stem] as a file name valid on every file system ([FileNames.safe]); [forWikilink], also
+     * without `[ ] | # ^`, which end or split a `![[name]]`.
      */
-    private fun safeStem(stem: String) = FileNames.safe(stem.replace(LINK_BREAKING, " "), fallback = "Attachment")
+    private fun safeStem(stem: String, forWikilink: Boolean) =
+        FileNames.safe(if (forWikilink) stem.replace(LINK_BREAKING, " ") else stem, fallback = "Attachment")
 
     /** [preferred] as a valid file name not yet taken (ignoring case): "x.png", "x 1.png", "x 2.png"... */
-    private suspend fun uniqueName(preferred: String): String {
+    private suspend fun uniqueName(preferred: String, forWikilink: Boolean): String {
         val ext = preferred.substringAfterLast('.', "").lowercase().filter { it.isLetterOrDigit() }.take(10)
-        val base = safeStem(if (ext.isEmpty()) preferred else preferred.substringBeforeLast('.'))
+        val base = safeStem(if (ext.isEmpty()) preferred else preferred.substringBeforeLast('.'), forWikilink)
         fun candidate(n: Int) = (if (n == 0) base else "$base $n") + if (ext.isEmpty()) "" else ".$ext"
         var n = 0
         while (file(candidate(n)) != null || dao.get(candidate(n)) != null) n++

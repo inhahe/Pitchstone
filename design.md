@@ -313,13 +313,18 @@ notes link to are files there. `Vault` lists the folder (hidden entries and the 
 out skipped); `SyncPlanner` decides; `FolderSync` does the notes' steps, then `AttachmentSync`
 the attachments'.
 
-**Folders left out** (`syncExcluded`, paths in the vault; `Excluded` compares ignoring case):
-not looked into. Pairs inside them are forgotten (a `Forget` step), so both sides stay as they
-are; notes in them are left out of the plan, unless one still has a pair elsewhere: it was
-just moved there in the app, and its file is moved after it (the pair is forgotten at the next
-sync). The other way, a paired file gone from sync is looked for in those folders too
-(`Vault.outside`, listed only then), and a match moves the note after it (Adopt). Taken back
-into sync, a folder's notes and files meet as at a first sync, by natural path.
+**Folders left out** (`syncExcluded`, paths in the vault; `Excluded` compares a vault path and
+an app folder alike, each part as `FileNames.safe` names it, ignoring case): not looked into.
+Pairs inside them are forgotten (a `Forget` step), so both sides stay as they are; notes in
+them, and the attachments only they link to, are left out, unless a note still has a pair
+elsewhere: it was just moved there in the app, and its file is moved after it, numbered
+`Title (2).md` if the name is taken there (the folder was never listed); the pair is forgotten
+at the next sync. The other way, a paired file gone from sync is looked for in those folders
+too (`Vault.outside`, listed only then): a file there before has its own time, so the moved one
+is the one with the pair's size, text and time (a move keeps a file's time), or, edited on the
+way, the only file there of its name, which is then not written over. The note moves after it
+(Adopt). Taken back into sync, a folder's notes and files meet as at a first sync, by natural
+path.
 
 **Memory.** `sync_entries` holds a row per pair as both sides last agreed: the path (unique
 ignoring case, `NOCASE`), the note id (or, for attachments, the attachment's name), the SHA-256 of
@@ -387,8 +392,15 @@ folder for as long as a listing of it is open, and announces each change at that
 children URI; so the watcher keeps a listing of every folder synced open (at most 300, not
 hidden, not left out: listed again after each sync, the new listings opened before the old
 close) and listens to the provider's authority, keeping the announcements for folders under
-the synced one, and calls once they have been quiet for 2 s. A provider that announces nothing
-leaves the other triggers. Watching stops when the app leaves the front (`onBack`). Through WorkManager (`SyncWorker`):
+the synced one, and calls once they have been quiet for 2 s. A folder that announces a change
+is listed again, so a folder made in it is watched from then on (all are listed afresh when
+the app comes to the front, and when the folders left out change). A sync's own writes are
+announced too: `hold` and `release` around each sync, with the folders it wrote into
+(`SyncReport.wroteIn`, from `Vault.touch`), drop what those folders announce during it and
+1.5 s after, and pass on what other folders did, so a sync never wakes another by itself (an
+open note's file, rewritten by each sync, once looped). A provider that announces nothing
+leaves the other triggers. Watching stops when the app leaves the front (`onBack`), and with
+`stop` once no folder is set. Through WorkManager (`SyncWorker`):
 a periodic job every 15 minutes (battery not low) while a folder is set, and a one-off job 3
 s after the app leaves the front, which keeps the process alive for it (appended after one
 running, which replacing would cancel). The last report, the last one that changed something,

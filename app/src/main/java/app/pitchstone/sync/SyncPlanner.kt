@@ -128,10 +128,18 @@ object SyncPlanner {
             val note = notesById[pair.noteId]
             // The same text under another name, new to this sync: the file was moved or renamed.
             // Unchanged, it has the pair's size: only those are read.
-            fun movedAmong(candidates: List<VaultFile>) =
-                candidates.firstOrNull { it.size == pair.size && it.path.lowercase() !in usedFiles && fileHash(it.path) == pair.hash }
-            // Into a folder left out of sync, only for a note that can follow it there.
-            val moved = movedAmong(unpaired) ?: if (note != null && !note.trashed) movedAmong(outsideFiles) else null
+            fun unused(f: VaultFile) = f.path.lowercase() !in usedFiles
+            fun sameText(f: VaultFile) = f.size == pair.size && unused(f) && fileHash(f.path) == pair.hash
+            val moved = unpaired.firstOrNull(::sameText)
+            // Into a folder left out of sync, for a note that can follow it there. The files there
+            // are not new to this sync: the moved one also has the pair's time (a move keeps a
+            // file's time; a file there from before has its own). Edited on the way, it is the
+            // only file there of its name, and is not written over.
+            val movedOut = if (moved != null || note == null || note.trashed) null else {
+                val name = pair.path.substringAfterLast('/')
+                outsideFiles.firstOrNull { it.modified == pair.modified && sameText(it) }
+                    ?: outsideFiles.filter { unused(it) && it.path.substringAfterLast('/').equals(name, ignoreCase = true) }.singleOrNull()
+            }
             if (moved != null && note != null) {
                 usedFiles += moved.path.lowercase()
                 if (note.trashed) {
@@ -140,6 +148,13 @@ object SyncPlanner {
                     usedNotes += note.id
                     out += SyncAction.Adopt(note.id, pair.path, moved.path, writeNote = note.hash != pair.hash)
                 }
+                continue
+            }
+            if (movedOut != null && note != null) {
+                usedFiles += movedOut.path.lowercase()
+                usedNotes += note.id
+                val same = movedOut.size == pair.size && fileHash(movedOut.path) == pair.hash
+                out += SyncAction.Adopt(note.id, pair.path, movedOut.path, writeNote = same && note.hash != pair.hash)
                 continue
             }
             when {

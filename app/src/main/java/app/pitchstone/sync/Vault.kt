@@ -3,6 +3,7 @@ package app.pitchstone.sync
 import app.pitchstone.data.AttachmentStore
 import app.pitchstone.export.DocEntry
 import app.pitchstone.export.DocumentDir
+import app.pitchstone.export.FileNames
 
 /** A file in the synced folder, where it is. */
 internal class Located(val path: String, val dir: DocumentDir, val entry: DocEntry)
@@ -14,24 +15,24 @@ internal fun describe(e: Exception) = e.message ?: e.javaClass.simpleName
 
 /**
  * The folders left out of sync, as the user chose them ("Templates", "Archive/2020"): a path is
- * left out if it is one of them or inside one, ignoring case.
+ * left out if it is one of them or inside one. Paths of the vault ("Work  2024/x.md") and of
+ * the app's notes ([SyncPlanner.folderFor]: "Work 2024") are compared alike, each part as the
+ * file name [FileNames.safe] makes of it, ignoring case.
  */
 internal class Excluded(folders: Collection<String>) {
-    private val paths = folders.map { normalize(it).lowercase() }.filter { it.isNotEmpty() }.toSet()
-
-    fun isEmpty() = paths.isEmpty()
+    private val keys = folders.map(::key).filter { it.isNotEmpty() }.toSet()
 
     /** Whether the file or folder at [path] is left out. */
     fun contains(path: String): Boolean {
-        val p = path.lowercase()
-        return paths.any { p == it || p.startsWith("$it/") }
+        val k = key(path)
+        return keys.any { k == it || k.startsWith("$it/") }
     }
 
     /** Whether a file in the folder [folder] ("" at the top) is left out. */
     fun containsFolder(folder: String) = folder.isNotEmpty() && contains(folder)
 
-    companion object {
-        fun normalize(path: String) = path.split('/').map { it.trim() }.filter { it.isNotEmpty() }.joinToString("/")
+    private companion object {
+        fun key(path: String) = path.split('/').filter { it.isNotBlank() }.joinToString("/") { FileNames.safe(it, "Folder").lowercase() }
     }
 }
 
@@ -55,6 +56,23 @@ internal class Vault private constructor(val root: DocumentDir, val excluded: Ex
      */
     var listedNothing = false
         private set
+
+    /** The folders this sync wrote into (lower-cased; "" the top), and their parents: see [touch]. */
+    val touched = HashSet<String>()
+
+    /**
+     * Records a write into [folder] (a file made, changed, moved in or out), and into the folders
+     * above it, which may have had a folder made in them: what the folder announces there now is
+     * the sync's own doing ([FolderWatcher]).
+     */
+    fun touch(folder: String) {
+        var f = folder.lowercase()
+        while (true) {
+            touched += f
+            if (f.isEmpty()) return
+            f = f.substringBeforeLast('/', "")
+        }
+    }
 
     /** The folder at [path] ("" for the top), created if missing. */
     fun dir(path: String): DocumentDir = dirs[path.lowercase()] ?: run {

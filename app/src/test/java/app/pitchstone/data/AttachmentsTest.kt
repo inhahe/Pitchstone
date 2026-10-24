@@ -154,10 +154,14 @@ class AttachmentsTest {
     }
 
     @Test
-    fun `stored names leave out what would break a wikilink`() = runBlocking<Unit> {
+    fun `a picture the app embeds has no name that would break the wikilink, an imported file keeps its own`() = runBlocking<Unit> {
         assertThat(store.add(bytes("a"), "Photo [1] #2 ^x|y.jpg")).isEqualTo("Photo 1 2 x y.jpg")
+        // Imported or synced, the notes name it as it is (in a markdown link): only what no file
+        // system holds goes.
+        assertThat(store.addOrReuse(bytes("b"), "Invoice #42 [copy].pdf")).isEqualTo("Invoice #42 [copy].pdf")
         // And the same bytes under that name are found again.
-        assertThat(store.addOrReuse(bytes("a"), "Photo [1] #2 ^x|y.jpg")).isEqualTo("Photo 1 2 x y.jpg")
+        assertThat(store.addOrReuse(bytes("b"), "Invoice #42 [copy].pdf")).isEqualTo("Invoice #42 [copy].pdf")
+        assertThat(store.names()).hasSize(2)
     }
 
     @Test

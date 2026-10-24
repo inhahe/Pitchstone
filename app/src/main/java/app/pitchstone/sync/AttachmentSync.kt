@@ -36,9 +36,10 @@ internal class AttachmentSync(
     /** Syncs the attachments of [vault]'s notes; adds what failed to [problems]. Returns how many were copied. */
     suspend fun sync(vault: Vault, problems: MutableMap<String, String>): Int {
         val entries = dao.all().filter { it.attachment != null }.associateBy { it.path.lowercase() }
-        // Attachment name -> the folder of a note linking to it.
+        // Attachment name -> the folder of a note in sync linking to it.
         val linked = LinkedHashMap<String, String>()
         for (note in repo.allNotes()) {
+            if (vault.excluded.containsFolder(SyncPlanner.folderFor(note.folder))) continue
             for (name in AttachmentStore.mentionedNames(note.body)) if (AttachmentStore.isAttachment(name)) linked.putIfAbsent(name, note.folder)
         }
         val folderSetting by lazy { attachmentFolderSetting(vault.root) }
@@ -49,9 +50,15 @@ internal class AttachmentSync(
             val copies = vault.attachments[name]
             val inVault = copies?.firstOrNull { it.path.lowercase() in entries } ?: copies?.minByOrNull { it.path.lowercase() }
             try {
-                val stored = store.file(name)
+                // Stored under another name, the row from the last sync says which.
+                val stored = store.file(name) ?: inVault?.let { entries[it.path.lowercase()]?.attachment }?.let(store::file)
                 when {
-                    inVault != null && stored != null -> if (compare(inVault, stored, entries[inVault.path.lowercase()], problems)) copied++
+                    inVault != null && stored != null -> {
+                        if (compare(inVault, stored, entries[inVault.path.lowercase()], problems)) copied++
+                        if (!stored.name.equals(inVault.entry.name, ignoreCase = true)) {
+                            problems.putIfAbsent(inVault.path, "stored as ${stored.name}, another file in the app having this name")
+                        }
+                    }
                     inVault != null -> {
                         bringIn(inVault, problems)
                         copied++
@@ -60,6 +67,7 @@ internal class AttachmentSync(
                         val folder = attachmentFolder(folderSetting, noteFolder)
                         // A folder left out of sync gets nothing written into it.
                         if (vault.excluded.contains(joinPath(folder, stored.name))) continue
+                        vault.touch(folder)
                         writeOut(vault.dir(folder), folder, stored)
                         copied++
                     }
