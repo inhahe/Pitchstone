@@ -24,6 +24,8 @@ app/                     The Android app (package app.pitchstone)
   markdown/              commonmark-java in the editor's dialect: Markdown, WikiLinks,
                          PlainText, Html, NoteIndexer, LinkRewriter
   export/                FileNames, ExportPlanner, ExportWriter, DocumentTree (SAF), Importer
+  sync/                  Folder sync: SyncEntries (table, hash), SyncPlanner (pure),
+                         FolderSync (engine), SyncManager (triggers, status, SyncWorker)
   share/                 Sharing: email/text/file intents
   ui/                    Compose screens: notes (list, drawer), editor (screen, WebView,
                          toolbar, dialogs, view model), export, importer, share, settings,
@@ -219,6 +221,9 @@ opens the stored file in a viewer through the FileProvider, and never makes a no
 
 Settings live in DataStore (`Settings.kt`).
 
+`sync_entries` (version 3, automatic migration tested from the exported version 2 schema) is
+folder sync's memory: see Folder sync.
+
 ## Markdown on the app side
 
 Export, sharing and indexing use commonmark-java configured like the editor (`Markdown.kt`).
@@ -284,6 +289,72 @@ skips notes already present unchanged. A file shared or opened from another app 
 from a `content://` URI. Files are read up to `Importer.MAX_BYTES` (a note's limit), counted
 as they are read since a provider's reported size can be missing; a larger file is skipped
 (folder import) or refused with a message (shared or opened file).
+
+## Folder sync
+
+Two-way sync with a folder chosen through SAF (`syncFolderUri`, a persisted tree permission).
+Each note is `Folder/Title.md` whose content is exactly the note's body; pictures the notes
+mention are files there.
+
+**Memory.** `sync_entries` holds a row per pair as both sides last agreed: the path (unique
+ignoring case, `NOCASE`), the note id (or, for pictures, the attachment name), the SHA-256 of
+the text (`SyncHash`; files are read as import reads them: BOM dropped, CRLF made LF), and the
+file's time and size. A side changed if its text's hash differs from the row's; a file is only
+read when its time or size moved, or it is new. Choosing another folder clears the table.
+
+**Planning** (`SyncPlanner.plan`, pure, unit-tested case by case): pairs whose file is still
+there give Record / WriteFile / UpdateNote / MoveFile / Conflict (newer wins by file time
+against `updatedAt`), or, when the note left the app, TrashFile (unchanged file) / RestoreNote
+or Import (changed file). Pairs whose file is gone look for an unpaired file with the same
+text (a rename outside: Adopt) and else give TrashNote, or the file is written again if the
+note changed since. Unpaired files match an unpaired note by natural path (a first sync:
+Record or Conflict) or are imported; the notes left are written as new files. `pathFor` keeps a
+file's path while it still suits the note (`Title (2).md` from a clash, another case, a name
+spelled with a character `FileNames.safe` replaces), else takes the first free
+`Title (n).md`. Every path listed or paired is reserved for the whole plan, so a note never
+takes the path of a pair forgotten later in the same plan, and a gone pair is forgotten before
+its note's file is written again at the same path.
+
+**Doing** (`FolderSync.sync`): lists the folder (hidden entries skipped), plans, and runs each
+step in a try: one failing is reported in `SyncReport.problems` and, its pair untouched, comes
+up again next time. Guards, each with a test that fails without it:
+
+- A step that changes a note does so only if the note still has the text planned from
+  (`unchanged`), and saves with `expectedBody` (compare and set); otherwise the next sync
+  decides. Notes open in an editor (`busy`: `EditorViewModel` registers them with
+  `SyncManager.opened`/`closed`) are not changed at all; their files may still be written.
+- Overwriting a file first re-reads its time and size (`DocumentDir.refresh`): a file changed
+  since the listing is left for the next sync.
+- A file moves with its pair (`moveFile`), so a step failing after the move leaves the pair
+  where the file is.
+- More than `TRASH_LIMIT` (5) notes losing their files at once, or any when the folder lists no
+  markdown file at all, are held back (`SyncReport.heldBack`) until the user picks
+  `GoneFiles.TRASH_NOTES` or `WRITE_AGAIN`.
+- Deletions are moves: files to the folder's `.trash` (numbered if the name is taken there),
+  notes to the app's trash; the text a conflict does not keep becomes a version
+  (`forceRevision`, or `keepVersion` for the file's text).
+- A renamed file renames its note (`retitle`); links are updated afterwards with
+  `applyRename`, whose rewrites reach their files at the next sync.
+
+Pictures come after the notes: for each picture name a note mentions, one only in the folder
+is stored (`addOrReuse`), one only in the app is written to Obsidian's `attachmentFolderPath`
+(`.obsidian/app.json`: `/`, a folder, or `./…` beside the note), and one changed in the folder
+since its row replaces the app's copy (`AttachmentStore.replace`, an atomic move). Two
+different pictures meeting without a row are both left, and reported. Sync never deletes a
+picture.
+
+**Running** (`SyncManager`, in `AppContainer`): one sync at a time (a mutex). In process: a
+conflated request channel with a 1.5 s debounce, fed when the process comes to the front
+(`ProcessLifecycleOwner`) and when an editor session ends. Through WorkManager (`SyncWorker`):
+a periodic job every 15 minutes (battery not low) while a folder is set, and a one-off job 3
+s after the app leaves the front, which keeps the process alive for it. The last report and
+any error are kept in `SharedPreferences` "sync" for Settings (`SyncSection`), which also
+shows the first-sync preview (`FolderSync.preview`: the plan as if nothing were paired), the
+held-back choice, and stop (permission released unless export remembers the same folder).
+
+`DocumentDir` gained what sync needs: `createFile` returns the new file's handle, `refresh`
+re-reads one entry (listing a folder after each write would make a first sync quadratic over
+SAF), `rename`, `moveTo` (SAF `moveDocument`, else copy and delete) and `delete`.
 
 ## Sharing
 

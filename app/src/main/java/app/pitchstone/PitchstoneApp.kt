@@ -7,6 +7,10 @@ import app.pitchstone.data.AppDatabase
 import app.pitchstone.data.AttachmentStore
 import app.pitchstone.data.NoteRepository
 import app.pitchstone.data.SettingsRepository
+import app.pitchstone.sync.SyncManager
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,6 +49,9 @@ class AppContainer(context: Context) {
     /** A scope for the note list to switch to (e.g. tapping a #tag in a note). */
     val listRequests = MutableStateFlow<ListRequest?>(null)
 
+    /** Two-way sync with a folder, when one is chosen in Settings. */
+    val sync = SyncManager(appContext, database, repository, attachments, settings, appScope, listMessages)
+
     /**
      * Start-up chores. A failure is logged and left for the next start: an exception here would
      * crash the app, at every start, before anything could be done about it.
@@ -62,6 +69,7 @@ class AppContainer(context: Context) {
                     .onSuccess { maintenance.edit().putLong(LAST_ATTACHMENT_GC, now).apply() }
                     .onFailure { Log.w(TAG, "Cleaning up attachments failed", it) }
             }
+            runCatching { sync.ensureScheduled() }.onFailure { Log.w(TAG, "Scheduling folder sync failed", it) }
         }
     }
 
@@ -82,6 +90,11 @@ class PitchstoneApp : Application() {
         super.onCreate()
         container = AppContainer(this)
         container.startMaintenance()
+        // Folder sync when the app comes to the front, and once it has left it.
+        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) = container.sync.requestSync()
+            override fun onStop(owner: LifecycleOwner) = container.sync.requestBackgroundSync()
+        })
     }
 }
 

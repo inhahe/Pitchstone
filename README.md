@@ -2,7 +2,8 @@
 
 A markdown note-taking app for Android, in the spirit of Obsidian: notes are markdown, linked
 with `[[wikilinks]]`, tagged with `#tags`, organised in folders, and easy to get out of the app
-again as `.md` or `.txt` files.
+again as `.md` or `.txt` files, or kept in step with a folder (an Obsidian vault, a Syncthing
+folder) as one markdown file per note.
 
 ## Writing
 
@@ -84,7 +85,8 @@ and stores each note as markdown.
   discarded.
 - Notes are included in Android's backup (Google One / device transfer). Pictures go along to
   a new phone in a device transfer, but not into Google's cloud backup, whose 25 MB limit they
-  would soon exceed (and then the notes would not be backed up either): export or sync them.
+  would soon exceed (and then the notes would not be backed up either): export them, or sync
+  them with a folder.
 - Opening a note never changes it: only your edits are saved.
 
 ## Exporting
@@ -126,6 +128,38 @@ files again does not create duplicates.
 
 Text shared to Pitchstone from another app becomes a new note, and markdown files opened with
 Pitchstone are imported.
+
+## Syncing with a folder
+
+Settings → Sync with a folder keeps the notes in step with a folder on the phone: an Obsidian
+vault, or any folder that Syncthing, FolderSync or a cloud app keeps in step with a computer.
+No more exporting and importing by hand.
+
+- **Choose folder**: before anything happens, Pitchstone shows what the first sync will do: how
+  many notes it will write to the folder, how many files will become notes, and how many are in
+  both (and how many of those differ: the newer text is kept, the other goes to the note's
+  version history). Nothing is deleted.
+- **One file per note**: `Folder/Title.md`, holding exactly the note's text. The pictures notes
+  show are files there too, where Obsidian's "Default location for new attachments" says (at
+  the top otherwise). Hidden folders (`.obsidian`, `.trash`, `.git`) are left alone, as are
+  files other than `.md` files and pictures.
+- **When**: as Pitchstone comes to the front, a few seconds after it leaves it or a note is
+  closed, about every 15 minutes in the background, and when you tap Sync now.
+- **Changes** on either side reach the other: edits, renames (a renamed file renames its note,
+  and links to it are updated if Settings → Update links when renaming is on), and moves
+  between folders. A note open in Pitchstone is not changed by a sync until you close it; its
+  own edits still go out to the folder.
+- **Changed on both sides**: the newer text is kept, the other goes to the note's version
+  history, and Pitchstone tells you which notes.
+- **Deleting**: a file deleted from the folder sends its note to Pitchstone's trash; a note
+  deleted in Pitchstone sends its file to the folder's `.trash` (Obsidian's trash). If the files
+  of more than 5 notes vanish at once (a folder emptied by mistake, a memory card not there),
+  nothing is trashed until you choose in Settings: move those notes to the trash, or write
+  their files again. Pictures are never deleted by a sync.
+- **Settings** shows when the last sync ran and what it did, and lists files that could not be
+  synced (too large for a note, unreadable); those are tried again at the next sync.
+- **Stop syncing** leaves the notes and the files as they are. **Change folder** starts afresh
+  with the new one, as a first sync.
 
 ## Markdown details
 

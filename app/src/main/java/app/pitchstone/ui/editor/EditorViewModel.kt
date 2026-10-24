@@ -172,6 +172,8 @@ class EditorViewModel(
     private var themeJson: JsonObject? = null
 
     init {
+        // Until finishSession: folder sync leaves the note alone meanwhile.
+        container.sync.opened(noteId)
         viewModelScope.launch {
             val note = repo.note(noteId)
             if (note == null) {
@@ -538,6 +540,15 @@ class EditorViewModel(
      */
     private suspend fun finishSession() {
         if (!finished.compareAndSet(false, true)) return
+        try {
+            finishNote()
+        } finally {
+            container.sync.closed(noteId)
+            container.sync.requestSync()
+        }
+    }
+
+    private suspend fun finishNote() {
         val c = content ?: return
         try {
             if (c.title.isBlank() && c.markdown.isBlank()) {

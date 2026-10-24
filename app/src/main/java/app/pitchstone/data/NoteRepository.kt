@@ -257,6 +257,27 @@ class NoteRepository(
         }
     }
 
+    /**
+     * Keeps [title] and [body] as a version of note [noteId] (now), without changing the note:
+     * the text folder sync did not keep when both sides had changed.
+     */
+    suspend fun keepVersion(noteId: Long, title: String, body: String) {
+        val now = clock()
+        db.withTransaction {
+            if (dao.note(noteId) == null) return@withTransaction
+            dao.insertRevision(RevisionEntity(noteId = noteId, title = title, body = body, savedAt = now))
+            dao.pruneRevisions(noteId, now - REVISION_RETENTION_MS, keep = 10)
+            dao.capRevisions(noteId, MAX_REVISIONS_PER_NOTE)
+        }
+    }
+
+    /** Gives note [noteId] the [title] and [folder] its file now has (a file renamed or moved outside the app). */
+    suspend fun retitle(noteId: Long, title: String, folder: String) {
+        val note = dao.note(noteId) ?: return
+        if (note.title != title) save(noteId, title, note.body)
+        if (note.folder != FolderPaths.normalize(folder)) move(listOf(noteId), folder)
+    }
+
     /** Replaces a note's content with an earlier version; the current one becomes a revision. */
     suspend fun restoreRevision(noteId: Long, revisionId: Long): Boolean {
         val rev = dao.revision(revisionId) ?: return false

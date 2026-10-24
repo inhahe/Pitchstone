@@ -15,6 +15,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
 import java.net.URLDecoder
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 
 /**
@@ -154,6 +156,26 @@ class AttachmentStore(
                 f.isFile && variants.matches(f.name) && f.length() == tmp.length() && digest(f) == tmpDigest
             }
             same?.name ?: add(tmp.inputStream(), name)
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    /**
+     * Replaces the bytes of the stored attachment [name] with [input] (a picture changed in a
+     * synced folder). Notes go on mentioning it by the same name.
+     */
+    suspend fun replace(name: String, input: InputStream) = withContext(Dispatchers.IO) {
+        val target = file(name) ?: error("No attachment $name")
+        val incoming = File(dir, ".incoming").apply { mkdirs() }
+        val tmp = File.createTempFile("replace", ".tmp", incoming)
+        try {
+            val size = copyLimited(input, tmp)
+            naming.withLock {
+                // Atomic: a reader sees the old picture or the new one, never part of one.
+                Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+                dao.get(target.name)?.let { dao.delete(listOf(it.name)); dao.insert(it.copy(size = size)) }
+            }
         } finally {
             tmp.delete()
         }

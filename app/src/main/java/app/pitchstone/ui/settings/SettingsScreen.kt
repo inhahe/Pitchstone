@@ -78,6 +78,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                 s.shrinkLargePhotos,
             ) { v -> update { it.copy(shrinkLargePhotos = v) } }
 
+            Section("Sync with a folder")
+            SyncSection(s.syncFolderUri)
+
             Section("Text")
             var size by remember(s.fontSize) { mutableFloatStateOf(s.fontSize.toFloat()) }
             Text("Text size: ${size.toInt()}", style = MaterialTheme.typography.bodyLarge)

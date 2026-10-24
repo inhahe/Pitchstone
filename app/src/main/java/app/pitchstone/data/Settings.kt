@@ -70,6 +70,8 @@ data class AppSettings(
     val exportTreeUri: String? = null,
     val shareFormat: ShareFormat = ShareFormat.HTML,
     val shareAttachFile: Boolean = false,
+    /** The folder (a document tree URI) notes are kept in step with, or null ([app.pitchstone.sync.SyncManager]). */
+    val syncFolderUri: String? = null,
 )
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -97,6 +99,7 @@ class SettingsRepository(private val context: Context) {
         val exportTreeUri = stringPreferencesKey("export_tree_uri")
         val shareFormat = stringPreferencesKey("share_format")
         val shareAttachFile = booleanPreferencesKey("share_attach_file")
+        val syncFolderUri = stringPreferencesKey("sync_folder_uri")
     }
 
     private inline fun <reified E : Enum<E>> Preferences.enum(key: Preferences.Key<String>, default: E): E =
@@ -131,6 +134,7 @@ class SettingsRepository(private val context: Context) {
             if (now.exportTreeUri != null) p[Keys.exportTreeUri] = now.exportTreeUri else p.remove(Keys.exportTreeUri)
             p[Keys.shareFormat] = now.shareFormat.name
             p[Keys.shareAttachFile] = now.shareAttachFile
+            if (now.syncFolderUri != null) p[Keys.syncFolderUri] = now.syncFolderUri else p.remove(Keys.syncFolderUri)
         }
     }
 
@@ -156,5 +160,6 @@ class SettingsRepository(private val context: Context) {
         exportTreeUri = p[Keys.exportTreeUri],
         shareFormat = p.enum(Keys.shareFormat, d.shareFormat),
         shareAttachFile = p[Keys.shareAttachFile] ?: d.shareAttachFile,
+        syncFolderUri = p[Keys.syncFolderUri],
     )
 }

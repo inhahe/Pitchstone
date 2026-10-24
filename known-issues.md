@@ -21,15 +21,14 @@
 
 ## Not supported (yet)
 
-- **Attachments and images stored with notes**: `![[image.png]]` embeds are shown as a chip;
-  images from the web (`![](https://…)`) display. A picture cannot be added from the phone.
 - **Raw HTML** is shown as source, not rendered (by choice: safety, and email output).
 - **Math** (`$…$`), **callouts** (`> [!note]`), **Mermaid**, and **inline footnotes** (`^[…]`)
   are kept as text, not rendered.
 - **Heading and block links** (`[[Note#Heading]]`, `[[Note#^id]]`) scroll to the heading or
   block in the editing and reading views, not in markdown source; one that matches nothing
   opens the note at its top, without a message.
-- **Sync**: notes live on the phone (and in Android backup); export/import moves them.
+- **Sync with a server** of Pitchstone's own: folder sync works through a folder another app
+  (Syncthing, a cloud app) keeps in step with other devices.
 - **Tables**: cells hold one line of text (as in GitHub markdown); merged cells pasted from
   elsewhere are split when saved.
 
@@ -61,3 +60,26 @@
   phone storage and in exports, so a new folder takes the spelling of an existing one ("work/Plans"
   goes into "Work"). Renaming a folder keeps the spelling you give it.
 - Gboard's own autocorrect and capitalisation apply in the editor as in any text field.
+
+### Folder sync
+
+- **Not instant**: changes made in the folder arrive when Pitchstone comes to the front, or
+  within about 15 minutes in the background, when Android lets background work run (battery
+  saver and Doze can postpone it). Sync now in Settings does it at once.
+- **A note's title is its file name.** Characters files cannot hold (`/ \ : * ? " < > |`)
+  become spaces in the name ("Client/Server" is `Client Server.md`, which Obsidian's
+  `[[Client/Server]]` would not find), and a note made from a file takes the file's name.
+  A change of case alone in a title does not rename the file (some storage would number it
+  instead).
+- **Editing a note in Pitchstone rewrites its formatting syntax** (see the top of this file),
+  and that reaches the file: `_em_` in a note edited on the phone becomes `*em*` in the vault.
+  Notes only opened are never rewritten.
+- **Changed on both sides** compares the file's time with the note's last edit; the clocks of
+  two devices may disagree by a little. Nothing is lost either way: the other text is in the
+  note's version history.
+- Empty folders are not synced, and a note with neither title nor text is not written.
+- Files are read as UTF-8; a file in another encoding shows replacement characters and is
+  written back as UTF-8 if the note is edited.
+- **Pictures**: two different pictures of one name meeting at the first sync are both left as
+  they are (Settings lists them); a picture is never deleted by a sync, and one deleted from the
+  folder comes back while a note still shows it.
