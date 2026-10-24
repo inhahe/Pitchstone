@@ -229,7 +229,10 @@ object LinkRewriter {
             val to = byName[name.substring(baseFrom).trim().lowercase()] ?: continue
             edits += (targetStart + baseFrom until targetStart + name.length) to to
         }
+        // Not in code or raw HTML, where `](pic.png)` is text, as wikilinks there are.
+        val literal = Markdown.sourceRanges(body).literal
         for (m in DESTINATION.findAll(body)) {
+            if (literal.any { m.range.first in it }) continue
             val angled = m.groups[1] != null
             val dest = m.groups[1] ?: m.groups[2]!!
             val raw = dest.value

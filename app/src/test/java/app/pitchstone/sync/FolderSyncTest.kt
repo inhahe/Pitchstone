@@ -64,7 +64,7 @@ class FolderSyncTest {
         f.setLastModified(now)
     }
 
-    private suspend fun sync(gone: GoneFiles = GoneFiles.ASK, busy: Set<Long> = emptySet()): SyncReport {
+    private suspend fun sync(gone: GoneFiles = GoneFiles.ASK, busy: (Long) -> Boolean = { false }): SyncReport {
         now += 60_000
         return engine.sync(FileDir(vault), updateLinks = true, busy = busy, gone = gone)
     }
@@ -249,10 +249,21 @@ class FolderSyncTest {
         val id = repo.create("Open", "before")
         sync()
         put("Open.md", "changed outside")
-        sync(busy = setOf(id))
+        sync(busy = { it == id })
         assertThat(repo.note(id)!!.body).isEqualTo("before")
         sync()
         assertThat(repo.note(id)!!.body).isEqualTo("changed outside")
+    }
+
+    @Test
+    fun `a note opened while a sync runs is not changed by it`() = runBlocking<Unit> {
+        val id = repo.create("Opened", "before")
+        sync()
+        put("Opened.md", "changed outside")
+        // Not open when the plan is made, open by the time its step runs.
+        var asked = 0
+        sync(busy = { asked++ > 0 })
+        assertThat(repo.note(id)!!.body).isEqualTo("before")
     }
 
     @Test

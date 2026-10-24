@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
+import androidx.annotation.RequiresApi
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -104,6 +105,7 @@ object ImagePrep {
     }
 
     /** The image from [source] as JPEG, at most [maxSide] pixels on its long side (turned as its EXIF says). */
+    @RequiresApi(Build.VERSION_CODES.P)
     private fun reencode(source: ImageDecoder.Source, maxSide: Int): ByteArray {
         val bitmap = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE

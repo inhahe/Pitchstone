@@ -407,4 +407,16 @@ class NoteRepositoryTest {
         assertThat(repo.purgeOldTrash()).isEqualTo(1)
         assertThat(repo.note(a)).isNull()
     }
+
+    @Test
+    fun `a version kept twice in a row is kept once`() = runBlocking<Unit> {
+        val id = repo.create("N", "now")
+        repo.keepVersion(id, "N", "the other text")
+        now += 1000
+        repo.keepVersion(id, "N", "the other text")
+        assertThat(repo.revisions(id).first()).hasSize(1)
+        now += 1000
+        repo.keepVersion(id, "N", "another")
+        assertThat(repo.revisions(id).first()).hasSize(2)
+    }
 }

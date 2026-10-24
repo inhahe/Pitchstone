@@ -268,10 +268,12 @@ not renamed twice). A picture that cannot be stored is reported (`failedPictures
 is imported. Mentions are found by name, the table-safe `![[pic.png\|200]]` included.
 
 Clean-up (`collectAttachmentGarbage`, at start-up at most daily): names mentioned by any note
-(trash included) are read page by page; the rest are looked for in versions with a LIKE query
-(as written, and percent-encoded as in a link destination);
+(trash included) are read page by page; if some stored names are left, versions are read the
+same way (one pass, by `mentionedNames`, stopping once all are found);
 an attachment nothing mentions is marked and deleted 30 days later. Pictures go to device
-transfer, not cloud backup (25 MB limit). Version 2 of the database added the table (automatic
+transfer, not cloud backup (25 MB limit): `data_extraction_rules.xml` from Android 12,
+`xml-v28/backup_rules.xml` (`requireFlags="deviceToDeviceTransfer"`) on 9 to 11; Android 8
+cannot tell the two apart, so there they stay behind. Version 2 of the database added the table (automatic
 migration, tested from the exported version 1 schema).
 
 ## Export and import

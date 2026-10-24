@@ -247,9 +247,7 @@ class NoteRepository(
             val shrunk = body.length < current.body.length / 2
             val last = dao.lastRevisionTime(id)
             if (hadContent && (forceRevision || emptied || shrunk || last == null || now - last >= REVISION_INTERVAL_MS)) {
-                dao.insertRevision(RevisionEntity(noteId = id, title = current.title, body = current.body, savedAt = now))
-                dao.pruneRevisions(id, now - REVISION_RETENTION_MS, keep = 10)
-                dao.capRevisions(id, MAX_REVISIONS_PER_NOTE)
+                recordRevision(id, current.title, current.body, now)
             }
             dao.updateContent(id, title, body, now, index.searchText, index.snippet)
             writeIndex(id, index)
@@ -257,17 +255,25 @@ class NoteRepository(
         }
     }
 
+    /** Records a version of note [noteId] at [now], and prunes its history (within a transaction). */
+    private suspend fun recordRevision(noteId: Long, title: String, body: String, now: Long) {
+        dao.insertRevision(RevisionEntity(noteId = noteId, title = title, body = body, savedAt = now))
+        dao.pruneRevisions(noteId, now - REVISION_RETENTION_MS, keep = 10)
+        dao.capRevisions(noteId, MAX_REVISIONS_PER_NOTE)
+    }
+
     /**
      * Keeps [title] and [body] as a version of note [noteId] (now), without changing the note:
-     * the text folder sync did not keep when both sides had changed.
+     * the text folder sync did not keep when both sides had changed. Not again if the latest
+     * version is that already (a sync that keeps failing after it does not fill the history).
      */
     suspend fun keepVersion(noteId: Long, title: String, body: String) {
         val now = clock()
         db.withTransaction {
             if (dao.note(noteId) == null) return@withTransaction
-            dao.insertRevision(RevisionEntity(noteId = noteId, title = title, body = body, savedAt = now))
-            dao.pruneRevisions(noteId, now - REVISION_RETENTION_MS, keep = 10)
-            dao.capRevisions(noteId, MAX_REVISIONS_PER_NOTE)
+            val last = dao.lastRevision(noteId)
+            if (last != null && last.title == title && last.body == body) return@withTransaction
+            recordRevision(noteId, title, body, now)
         }
     }
 
@@ -341,28 +347,25 @@ class NoteRepository(
 
     /**
      * Lets [store] drop the attachments no note (in the trash too) and no earlier version has
-     * mentioned for a while ([AttachmentStore.collectGarbage]). Notes are read page by page;
-     * versions, of which there are many more, are asked only about the names no note mentions.
+     * mentioned for a while ([AttachmentStore.collectGarbage]). Notes are read page by page,
+     * and then, if some stored names are mentioned by no note, versions too (one pass, by the
+     * same rules: [AttachmentStore.mentionedNames]).
      */
     suspend fun collectAttachmentGarbage(store: AttachmentStore) {
         val mentioned = HashSet<String>()
-        var after = 0L
-        while (true) {
-            val page = dao.bodiesAfter(after, 200)
-            if (page.isEmpty()) break
-            for (note in page) mentioned += AttachmentStore.mentionedNames(note.body)
-            after = page.last().id
+        suspend fun scan(page: suspend (after: Long) -> List<IdBody>, until: () -> Boolean) {
+            var after = 0L
+            while (!until()) {
+                val rows = page(after)
+                if (rows.isEmpty()) break
+                for (row in rows) mentioned += AttachmentStore.mentionedNames(row.body)
+                after = rows.last().id
+            }
         }
-        for (name in store.names()) {
-            if (name.lowercase() in mentioned) continue
-            // As written in a version: plain, or in a link destination, percent-encoded (`Pasted%20image.png`).
-            val spellings = linkedSetOf(
-                name,
-                name.replace(" ", "%20"),
-                java.net.URLEncoder.encode(name, "UTF-8").replace("+", "%20"),
-            )
-            if (spellings.any { dao.revisionsContain(escapeLike(it)) }) mentioned += name.lowercase()
-        }
+        scan({ dao.bodiesAfter(it, 200) }) { false }
+        val unmentioned = store.names().map { it.lowercase() }.filterTo(HashSet()) { it !in mentioned }
+        // Versions may be up to 1 MB each: fewer to a page. Done once all are found.
+        if (unmentioned.isNotEmpty()) scan({ dao.revisionBodiesAfter(it, 50) }) { mentioned.containsAll(unmentioned) }
         store.collectGarbage(mentioned)
     }
 

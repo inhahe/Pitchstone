@@ -124,6 +124,13 @@ class AttachmentsTest {
     }
 
     @Test
+    fun `a picture's name in code is not renamed`() {
+        val md = "![a](pic.png) `![b](pic.png)`\n\n```\n![c](pic.png)\n```\n"
+        assertThat(LinkRewriter.renameAttachment(md, "pic.png", "pic 1.png"))
+            .isEqualTo("![a](pic%201.png) `![b](pic.png)`\n\n```\n![c](pic.png)\n```\n")
+    }
+
+    @Test
     fun `pictures renamed together are each renamed once`() {
         // image.png becomes "image 1.png", the name another picture had: that one must not follow.
         val md = "![[image.png]] ![[image 1.png]] ![](image%201.png)"

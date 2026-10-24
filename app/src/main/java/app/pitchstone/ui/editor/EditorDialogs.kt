@@ -22,6 +22,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -179,6 +180,7 @@ private fun InfoRow(label: String, value: String) {
 @Composable
 fun BacklinksDialog(vm: EditorViewModel, onDismiss: () -> Unit, onOpen: (Long) -> Unit) {
     val notes by produceState<List<NoteSummary>?>(null) { value = vm.backlinks() }
+    val state by vm.state.collectAsState()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Links to this note") },
@@ -186,7 +188,7 @@ fun BacklinksDialog(vm: EditorViewModel, onDismiss: () -> Unit, onOpen: (Long) -
             val list = notes
             when {
                 list == null -> Text("…")
-                list.isEmpty() -> Text("No other note links here yet. Link to it with [[${vm.state.value.title.ifBlank { "its title" }}]].")
+                list.isEmpty() -> Text("No other note links here yet. Link to it with [[${state.title.ifBlank { "its title" }}]].")
                 else -> LazyColumn(Modifier.heightIn(max = 360.dp)) {
                     items(list) { n ->
                         PickRow(Icons.Outlined.Description, n.title.ifBlank { "Untitled" }) { onOpen(n.id) }

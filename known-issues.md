@@ -34,9 +34,9 @@
 
 ## Behaviour to know
 
-- **Pictures are not in Google's cloud backup** (they go to a new phone in a device transfer):
-  its 25 MB limit per app would stop the notes being backed up too. Keep them safe with export
-  or folder sync.
+- **Pictures are not in Google's cloud backup** (they go to a new phone in a device transfer,
+  from Android 9 on): its 25 MB limit per app would stop the notes being backed up too. Keep
+  them safe with export or folder sync.
 - An export puts all pictures in one `attachments` folder. Obsidian finds `![[name]]` anywhere,
   but a `![](some/path/pic.png)` link written by another app may then point elsewhere.
 - Turning HEIC photos into JPEG, and shrinking large photos, needs Android 9 or later; before

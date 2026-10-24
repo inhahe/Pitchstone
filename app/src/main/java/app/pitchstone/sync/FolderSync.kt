@@ -224,14 +224,15 @@ class FolderSync(
      * Brings [root] and the app's notes in step, then the pictures notes show.
      *
      * @param updateLinks a note renamed by renaming its file gets the [[links]] to it updated
-     * @param busy notes open in an editor: the sync does not change them (their files it may
-     *   write), and catches up with them at a later sync
+     * @param busy whether a note is open in an editor, asked as each step runs (one may be
+     *   opened during a long sync): the sync does not change such a note (its file it may
+     *   write), and catches up with it at a later sync
      * @param gone what to do when more than [TRASH_LIMIT] notes lost their files at once
      */
     suspend fun sync(
         root: DocumentDir,
         updateLinks: Boolean,
-        busy: Set<Long> = emptySet(),
+        busy: (noteId: Long) -> Boolean = { false },
         gone: GoneFiles = GoneFiles.ASK,
     ): SyncReport = withContext(Dispatchers.IO) {
         val vault = scan(root)
@@ -240,7 +241,7 @@ class FolderSync(
         val planned = s.notes.associateBy { it.id }
         val problems = LinkedHashMap<String, String>()
         val hash = hasher(texts, problems)
-        fun allowed(a: SyncAction) = a.changesNote()?.let { it in busy } != true
+        fun allowed(a: SyncAction) = a.changesNote()?.let(busy) != true
 
         // Nothing listed while notes are paired: more likely a folder that cannot be read right
         // now (a card not there, a folder moved) than one emptied. Nothing is done, not even
@@ -371,6 +372,8 @@ class FolderSync(
         fun unchanged(body: String, id: Long) = SyncHash.of(body) == planned[id]?.hash
 
         for (action in plan) {
+            // Opened since the plan was made: left for a later sync.
+            if (!allowed(action)) continue
             try {
                 when (action) {
                     is SyncAction.Record -> {
@@ -522,7 +525,10 @@ class FolderSync(
         val folderSetting by lazy { attachmentFolderSetting(vault.root) }
         var copied = 0
         for ((name, noteFolder) in shown) {
-            val inVault = vault.pictures[name]?.firstOrNull()
+            // Of copies in several folders, the one synced before, else the first by path (not
+            // by listing order, which may change between syncs).
+            val copies = vault.pictures[name]
+            val inVault = copies?.firstOrNull { it.path.lowercase() in entries } ?: copies?.minByOrNull { it.path.lowercase() }
             try {
                 val stored = attachments.file(name)
                 when {
@@ -537,13 +543,13 @@ class FolderSync(
                         }
                         if (untouched && stored.length() == e.size) continue
                         if (e.size > AttachmentStore.MAX_BYTES) error("larger than a picture can be")
-                        val bytes = inVault.dir.read(e).use { it.readBytes() }
-                        val hash = SyncHash.of(bytes)
+                        // Hashed as read, not held in memory: pictures may be large.
+                        val hash = SyncHash.of(inVault.dir.read(e))
                         val recorded = when {
-                            hash == SyncHash.of(stored.readBytes()) -> hash
+                            hash == SyncHash.of(stored.inputStream()) -> hash
                             // Changed in the folder since both had it: the app's copy follows.
                             entry != null && !clash && hash != entry.hash -> {
-                                attachments.replace(stored.name, bytes.inputStream())
+                                attachments.replace(stored.name, inVault.dir.read(e))
                                 copied++
                                 hash
                             }
@@ -559,12 +565,12 @@ class FolderSync(
                     inVault != null -> {
                         val e = inVault.entry
                         if (e.size > AttachmentStore.MAX_BYTES) error("larger than a picture can be")
-                        val bytes = inVault.dir.read(e).use { it.readBytes() }
-                        val storedAs = attachments.addOrReuse(bytes.inputStream(), e.name)
+                        val storedAs = attachments.addOrReuse(inVault.dir.read(e), e.name)
                         if (!storedAs.equals(e.name, ignoreCase = true)) {
                             problems.putIfAbsent(inVault.path, "stored as $storedAs, another picture in the app having this name")
                         }
-                        dao.put(SyncEntryEntity(inVault.path, attachment = storedAs, hash = SyncHash.of(bytes), modified = e.lastModified, size = e.size))
+                        val hash = SyncHash.of((attachments.file(storedAs) ?: error("$storedAs vanished")).inputStream())
+                        dao.put(SyncEntryEntity(inVault.path, attachment = storedAs, hash = hash, modified = e.lastModified, size = e.size))
                         copied++
                     }
                     stored != null -> {
@@ -580,7 +586,7 @@ class FolderSync(
                         val written = dir.refresh(created.entry) ?: created.entry
                         dao.put(
                             SyncEntryEntity(
-                                join(folder, created.name), attachment = stored.name, hash = SyncHash.of(stored.readBytes()),
+                                join(folder, created.name), attachment = stored.name, hash = SyncHash.of(stored.inputStream()),
                                 modified = written.lastModified, size = written.size,
                             ),
                         )
@@ -617,7 +623,7 @@ class FolderSync(
         val s = setting?.trim().orEmpty()
         return when {
             s.isEmpty() || s == "/" -> ""
-            s == "." || s.startsWith("./") -> clean(SyncPlanner.folderFor(SyncNote(0, "", noteFolder, "", 0, false)) + "/" + s.removePrefix("."))
+            s == "." || s.startsWith("./") -> clean(SyncPlanner.folderFor(noteFolder) + "/" + s.removePrefix("."))
             else -> clean(s)
         }
     }

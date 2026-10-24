@@ -84,7 +84,7 @@ and stores each note as markdown.
   goes to the trash (with Undo) rather than disappearing; only a new note you never typed in is
   discarded.
 - Notes are included in Android's backup (Google One / device transfer). Pictures go along to
-  a new phone in a device transfer, but not into Google's cloud backup, whose 25 MB limit they
+  a new phone in a device transfer (from Android 9 on), but not into Google's cloud backup, whose 25 MB limit they
   would soon exceed (and then the notes would not be backed up either): export them, or sync
   them with a folder.
 - Opening a note never changes it: only your edits are saved.

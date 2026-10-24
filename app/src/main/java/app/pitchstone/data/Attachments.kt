@@ -17,7 +17,6 @@ import java.io.InputStream
 import java.net.URLDecoder
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.security.MessageDigest
 
 /**
  * A file stored with the notes (an image), which notes show by its name, as Obsidian does:
@@ -51,6 +50,9 @@ interface AttachmentDao {
 
     @Query("DELETE FROM attachments WHERE name IN (:names)")
     suspend fun delete(names: List<String>)
+
+    @Query("UPDATE attachments SET size = :size WHERE name = :name")
+    suspend fun setSize(name: String, size: Long)
 }
 
 /** An attachment larger than [AttachmentStore.MAX_BYTES] was refused. */
@@ -176,7 +178,7 @@ class AttachmentStore(
             naming.withLock {
                 // Atomic: a reader sees the old picture or the new one, never part of one.
                 Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-                dao.get(target.name)?.let { dao.delete(listOf(it.name)); dao.insert(it.copy(size = size)) }
+                dao.setSize(target.name, size)
             }
         } finally {
             tmp.delete()
@@ -200,18 +202,7 @@ class AttachmentStore(
         return size
     }
 
-    private fun digest(file: File): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val n = input.read(buffer)
-                if (n < 0) break
-                md.update(buffer, 0, n)
-            }
-        }
-        return md.digest().joinToString("") { "%02x".format(it) }
-    }
+    private fun digest(file: File): String = Sha256.of(file.inputStream())
 
     /**
      * [stem] as a file name that a wikilink can name too: valid on every file system

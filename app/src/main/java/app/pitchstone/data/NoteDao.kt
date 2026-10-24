@@ -155,9 +155,13 @@ interface NoteDao {
 
     // ---- Revisions ------------------------------------------------------------------------
 
-    /** Whether any earlier version's text contains [pattern] (a LIKE pattern, `\` escaping; see escapeLike). */
-    @Query("SELECT EXISTS(SELECT 1 FROM revisions WHERE body LIKE '%' || :pattern || '%' ESCAPE '\\')")
-    suspend fun revisionsContain(pattern: String): Boolean
+    /** Earlier versions' bodies in id order, from after [after], [limit] at a time. */
+    @Query("SELECT id, body FROM revisions WHERE id > :after ORDER BY id LIMIT :limit")
+    suspend fun revisionBodiesAfter(after: Long, limit: Int): List<IdBody>
+
+    /** Note [noteId]'s latest earlier version, or null. */
+    @Query("SELECT * FROM revisions WHERE noteId = :noteId ORDER BY savedAt DESC, id DESC LIMIT 1")
+    suspend fun lastRevision(noteId: Long): RevisionEntity?
 
     @Insert
     suspend fun insertRevision(revision: RevisionEntity): Long

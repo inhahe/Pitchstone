@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 9 to 11: back up the notes database and settings, not caches. Pictures go to a new
+     phone in a device transfer only: in cloud backup, past its 25 MB per app, the notes would
+     not be backed up either. (Android 12+ uses data_extraction_rules.xml; Android 8 the
+     version without pictures, as it cannot tell the two apart.) -->
+<full-backup-content>
+    <include domain="database" path="pitchstone.db" />
+    <include domain="database" path="pitchstone.db-wal" />
+    <include domain="database" path="pitchstone.db-shm" />
+    <include domain="file" path="datastore/settings.preferences_pb" />
+    <include domain="file" path="attachments/" requireFlags="deviceToDeviceTransfer" />
+</full-backup-content>

@@ -435,6 +435,20 @@ test.describe('pictures stored with notes', () => {
     expect((await flush(page)).dirty).toBe(false)
   })
 
+  test('a pasted picture too large to store is not read, and the app is told', async ({page}) => {
+    await open(page, 'text\n')
+    await page.evaluate(() => {
+      const dt = new DataTransfer()
+      dt.items.add(new File([new Uint8Array(25_000_001)], 'huge.png', {type: 'image/png'}))
+      document.querySelector('.ProseMirror')!.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}))
+    })
+    await expect.poll(async () => (await messages(page)).find((m) => m.type === 'warning')).toMatchObject({
+      code: 'imageTooLarge',
+      message: 'huge.png is larger than 25 MB, the most a picture can be.',
+    })
+    expect((await messages(page)).some((m) => m.type === 'pasteImage')).toBe(false)
+  })
+
   test("the app's answer embeds the picture where the cursor is", async ({page}) => {
     await servePictures(page, ['Pasted image 1.png'])
     await open(page, 'before\n')

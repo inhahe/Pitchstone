@@ -15,6 +15,7 @@ import {EditorView} from 'prosemirror-view'
 import {MarkdownParseError, parseMarkdown} from '../markdown/parse'
 import {serializeMarkdown} from '../markdown/serialize'
 import {schema} from '../schema'
+import {MAX_IMAGE_BYTES} from './attachments'
 import {type Mode, post} from './bridge'
 import {bubblePlugin, openTarget, targetAtPos} from './bubble'
 import {
@@ -93,10 +94,19 @@ function hasImages(data: DataTransfer | null): boolean {
   return imageFiles(data).length > 0
 }
 
-/** Sends the images in `data` to the app (as base64); whether there were any. */
+/**
+ * Sends the images in `data` to the app (as base64); whether there were any. One larger than
+ * the app stores is not read at all (base64 of it would only exhaust memory on both sides): the
+ * app is told instead.
+ */
 function sendImages(data: DataTransfer | null): boolean {
   const files = imageFiles(data)
   for (const file of files) {
+    if (file.size > MAX_IMAGE_BYTES) {
+      const mb = MAX_IMAGE_BYTES / 1_000_000
+      post({type: 'warning', code: 'imageTooLarge', message: `${file.name || 'This picture'} is larger than ${mb} MB, the most a picture can be.`})
+      continue
+    }
     const reader = new FileReader()
     reader.onload = () => {
       const url = String(reader.result)

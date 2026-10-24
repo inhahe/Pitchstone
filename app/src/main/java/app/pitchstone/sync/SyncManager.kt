@@ -82,7 +82,13 @@ class SyncManager(
                 // Requests close together (a note closed as the app leaves the front) make one sync.
                 delay(DEBOUNCE_MS)
                 requests.tryReceive()
-                syncNow()
+                // A failure must not end this loop: every later request would be dropped.
+                try {
+                    syncNow()
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    Log.w(TAG, "Sync failed", e)
+                }
             }
         }
     }
@@ -106,6 +112,13 @@ class SyncManager(
      * just left the front, and could be stopped before a sync of its own finished.
      */
     fun requestBackgroundSync() {
+        // Only with a folder set: a job for nothing at every trip to the background otherwise.
+        scope.launch {
+            if (runCatching { settings.current().syncFolderUri }.getOrNull() != null) enqueueBackgroundSync()
+        }
+    }
+
+    private fun enqueueBackgroundSync() {
         // After one running (replacing it would cancel it midway), or replacing one not started.
         WorkManager.getInstance(context).enqueueUniqueWork(
             WORK_SOON, ExistingWorkPolicy.APPEND_OR_REPLACE,
@@ -189,7 +202,7 @@ class SyncManager(
         // A sync stopped midway (WorkManager cancelling it) must not leave "Syncing…" up.
         try {
             val root = SafDir.root(context.contentResolver, Uri.parse(uri))
-            val report = engine.sync(root, s.updateLinksOnRename, busy = open.keys.toSet(), gone = gone)
+            val report = engine.sync(root, s.updateLinksOnRename, busy = { open.containsKey(it) }, gone = gone)
             val before = _status.value.last
             val changed = report.changes > 0 || report.conflicts.isNotEmpty()
             val lastChange = if (changed) report else _status.value.lastChange

@@ -6,7 +6,8 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Upsert
-import java.security.MessageDigest
+import app.pitchstone.data.Sha256
+import java.io.InputStream
 
 /**
  * What a file in the synced folder and its counterpart in the app were at the last sync:
@@ -43,8 +44,10 @@ interface SyncDao {
 
 /** The hashes sync compares: SHA-256 of a note's text (UTF-8), or of a file's bytes. */
 object SyncHash {
-    fun of(text: String): String = of(text.toByteArray(Charsets.UTF_8))
+    fun of(text: String): String = Sha256.of(text.toByteArray(Charsets.UTF_8))
 
-    fun of(bytes: ByteArray): String =
-        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+    fun of(bytes: ByteArray): String = Sha256.of(bytes)
+
+    /** Of a picture, read in pieces; closes [input]. */
+    fun of(input: InputStream): String = Sha256.of(input)
 }

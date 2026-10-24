@@ -2,6 +2,9 @@
 // 20261023211500.png]]`). The app serves them at /attachments/<name> (EditorWebView's
 // AttachmentPathHandler), looking the name up ignoring case and any folder part.
 
+/** The largest picture the app stores (AttachmentStore.MAX_BYTES). */
+export const MAX_IMAGE_BYTES = 25_000_000
+
 /** File types shown as pictures (the app's AttachmentStore.IMAGE_EXTENSIONS). */
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif'])
 

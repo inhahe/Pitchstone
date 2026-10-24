@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android 11 and older: back up the notes database and settings, not caches. -->
+<!-- Android 8 (9 to 11: xml-v28): back up the notes database and settings, not caches. -->
 <full-backup-content>
     <include domain="database" path="pitchstone.db" />
     <include domain="database" path="pitchstone.db-wal" />
