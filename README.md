@@ -191,12 +191,14 @@ links. Notes you only open are never rewritten. See `known-issues.md` for the de
    System → Developer options → turn on **USB debugging**.
 2. Connect the phone to the PC with USB, unlock it, and accept **Allow USB debugging?**
    (tick *Always allow from this computer*).
-3. In this folder, run `install-on-phone.bat` (it builds the release version and installs it).
+3. In this folder, run `install-on-phone.bat` (Windows: it builds the release version and
+   installs it). Elsewhere, `./gradlew assembleRelease`, then
+   `adb install -r app/build/outputs/apk/release/app-release.apk`.
 
-To update later, run the same script: notes are kept. **Back up
-`C:\Users\Computer\.android\pitchstone-release.jks` and `keystore.properties`**: Android only
-accepts an update signed with the same key, and installing differently signed builds means
-uninstalling first, which deletes the notes on the phone (export them first).
+To update later, do the same again: notes are kept. **Back up your release key** (the `.jks`
+file `keystore.properties` names) **and `keystore.properties`**: Android only accepts an update
+signed with the same key, and installing differently signed builds means uninstalling first,
+which deletes the notes on the phone (export them first).
 
 ## Building
 
@@ -211,10 +213,15 @@ cd editor && npm test          # markdown round-trip, CommonMark spec, fuzzer
 cd editor && npm run test:e2e  # editor in Chromium: typing, IME composition, commands
 ```
 
-`keystore.properties` (not in git) names the release key:
+`keystore.properties` (not in git) names the release key; without it, the release build is
+unsigned. Make a key once, kept outside the project:
 
 ```
-storeFile=C:/Users/Computer/.android/pitchstone-release.jks
+keytool -genkeypair -v -keystore pitchstone-release.jks -alias pitchstone -keyalg RSA -keysize 2048 -validity 10000
+```
+
+```
+storeFile=/path/to/pitchstone-release.jks
 storePassword=…
 keyAlias=pitchstone
 keyPassword=…
