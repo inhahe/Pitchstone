@@ -1,5 +1,6 @@
 import {describe, expect, it} from 'vitest'
 import {linkKey, linkName, noteExists} from '../src/editor/links'
+import {parseMarkdown} from '../src/markdown/parse'
 
 // The keys the app sends for notes "Plan" in Work/Sub, "Meeting 10/23" in Work and "Top" at
 // the top level (WikiLinks.lookupKeys; the Kotlin tests check the app's side of these).
@@ -33,5 +34,17 @@ describe('wikilink targets', () => {
 
   it('a link into the note itself always exists', () => {
     expect(noteExists(new Set(), '#Heading')).toBe(true)
+  })
+})
+
+describe('links in tables', () => {
+  it('are read as the app reads them: a link cannot span cells', () => {
+    // The same note as the app's WikiLinksTest: its header row has three cells.
+    const doc = parseMarkdown('| [[a|b]] | [[c\\|d]] |\n| --- | --- | --- |\n| [[e]] | f |\n\nOutside: [[g|h]]\n')
+    const links: [string, string | null][] = []
+    doc.descendants((n) => {
+      if (n.type.name === 'wikilink') links.push([n.attrs.target, n.attrs.alias])
+    })
+    expect(links).toEqual([['c', 'd'], ['e', null], ['g', 'h']])
   })
 })

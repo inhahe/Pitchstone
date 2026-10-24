@@ -1,14 +1,17 @@
-// Every example of the CommonMark spec, read and written back: the written markdown must parse
-// to the same document (after normalization), and writing that again must give the same text.
+// Every example of the CommonMark spec, twice: read and written back (the written markdown must
+// parse to the same document, after normalization, and writing that again must give the same
+// text), and rendered as the spec says it reads.
 
 import {readFileSync} from 'node:fs'
 import {describe, expect, it} from 'vitest'
 import type {Node} from 'prosemirror-model'
+import {createMarkdownIt} from '../src/markdown/md'
 import {parseMarkdown} from '../src/markdown/parse'
 import {serializeMarkdown} from '../src/markdown/serialize'
 
 interface Example {
   markdown: string
+  html: string
   example: number
   section: string
 }
@@ -31,6 +34,27 @@ describe('CommonMark spec examples survive a round trip', () => {
       expect(serializeMarkdown(d2).markdown, context).toBe(r.markdown)
       // Normalization may move whitespace out of formatting, but never changes the text.
       expect(plain(r.doc), context).toBe(plain(d1))
+    })
+  }
+})
+
+// The dialect is CommonMark with additions: every spec example must read as the spec says,
+// unless one of the additions applies. (The round trip above only shows that the editor reads
+// its own output consistently; a rule broken on both sides would pass it.)
+describe('CommonMark spec examples read as the spec says', () => {
+  const commonmark = createMarkdownIt({breaks: false})
+  commonmark.renderer.rules.link_def = () => ''
+  /** Examples where `[[...]]` is a wikilink in this dialect. */
+  const WIKILINKS = new Set([548, 559, 590])
+  // markdown-it writes an empty block quote without the line break inside.
+  const html = (s: string) => s.replace(/<blockquote>\n<\/blockquote>/g, '<blockquote></blockquote>')
+  for (const ex of examples) {
+    it(`example ${ex.example} (${ex.section})`, () => {
+      if (WIKILINKS.has(ex.example)) {
+        expect(ex.markdown).toContain('[[')
+        return
+      }
+      expect(html(commonmark.render(ex.markdown)), JSON.stringify(ex.markdown)).toBe(html(ex.html))
     })
   }
 })

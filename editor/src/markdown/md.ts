@@ -72,9 +72,8 @@ function taskListRule(state: StateCore): void {
  * unused definition (a cited source, say) would vanish from the note the first time it is saved.
  */
 function preserveDefinitions(md: MarkdownIt): void {
-  const rules = (md.block.ruler as unknown as {__rules__: {name: string; fn: BlockRule}[]}).__rules__
-  const original = rules.find((r) => r.name === 'reference')?.fn
-  if (!original) throw new Error('markdown-it has no reference rule')
+  const rule = blockRule(md, 'reference')
+  const original = rule.fn
   const wrapped: BlockRule = (state, startLine, endLine, silent) => {
     if (!original(state, startLine, endLine, silent)) return false
     if (!silent) {
@@ -84,7 +83,17 @@ function preserveDefinitions(md: MarkdownIt): void {
     }
     return true
   }
-  md.block.ruler.at('reference', wrapped, {alt: ['paragraph', 'reference']})
+  // The rule keeps the blocks it may interrupt: none, since a definition cannot interrupt a
+  // paragraph (CommonMark); listed there, it would read "Foo" over "[bar]: /baz" as two blocks.
+  md.block.ruler.at('reference', wrapped, {alt: rule.alt})
+}
+
+/** markdown-it's block rule [name], with the blocks it may interrupt (`alt`). */
+function blockRule(md: MarkdownIt, name: string): {fn: BlockRule; alt: string[]} {
+  const rules = (md.block.ruler as unknown as {__rules__: {name: string; fn: BlockRule; alt: string[]}[]}).__rules__
+  const rule = rules.find((r) => r.name === name)
+  if (!rule) throw new Error(`markdown-it has no ${name} rule`)
+  return {fn: rule.fn, alt: [...rule.alt]}
 }
 
 /**
@@ -92,9 +101,8 @@ function preserveDefinitions(md: MarkdownIt): void {
  * the plugin leaves `map` unset, and the parser needs it to count blank lines between blocks.
  */
 function mapFootnoteDefinitions(md: MarkdownIt): void {
-  const rules = (md.block.ruler as unknown as {__rules__: {name: string; fn: BlockRule}[]}).__rules__
-  const original = rules.find((r) => r.name === 'footnote_def')?.fn
-  if (!original) throw new Error('markdown-it-footnote has no footnote_def rule')
+  const rule = blockRule(md, 'footnote_def')
+  const original = rule.fn
   const wrapped: BlockRule = (state, startLine, endLine, silent) => {
     const first = state.tokens.length
     if (!original(state, startLine, endLine, silent)) return false
@@ -102,11 +110,15 @@ function mapFootnoteDefinitions(md: MarkdownIt): void {
     if (!silent && open?.type === 'footnote_reference_open') open.map = [startLine, state.line]
     return true
   }
-  md.block.ruler.at('footnote_def', wrapped, {alt: ['paragraph', 'reference']})
+  md.block.ruler.at('footnote_def', wrapped, {alt: rule.alt})
 }
 
-export function createMarkdownIt(): MarkdownIt {
-  const md = markdownIt('commonmark', {html: true, breaks: true, linkify: false, typographer: false})
+/**
+ * The notes' markdown-it. `breaks` (a single newline is a line break, as in Obsidian) is off
+ * only for checking the rest against the CommonMark spec (test/spec.test.ts).
+ */
+export function createMarkdownIt({breaks = true}: {breaks?: boolean} = {}): MarkdownIt {
+  const md = markdownIt('commonmark', {html: true, breaks, linkify: false, typographer: false})
   md.enable(['table', 'strikethrough'])
   md.use(mark)
   md.use(footnote)

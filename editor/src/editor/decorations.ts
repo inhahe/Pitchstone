@@ -2,7 +2,7 @@
 // and the empty-note placeholder. None of them change the document.
 
 import type {Node} from 'prosemirror-model'
-import {Plugin, PluginKey, type EditorState} from 'prosemirror-state'
+import {Plugin, PluginKey, type EditorState, type Transaction} from 'prosemirror-state'
 import {Decoration, DecorationSet} from 'prosemirror-view'
 import {schema} from '../schema'
 import {noteExists} from './links'
@@ -15,7 +15,10 @@ export const TAG = /(^|[\s([{])#([\p{L}\p{N}_\-/]*[\p{L}_\-/][\p{L}\p{N}_\-/]*)/
 export const URL_RE = /\bhttps?:\/\/[^\s<>"'`]*[^\s<>"'`.,;:!?)\]}]/g
 
 export interface DecorationState {
+  /** Everything shown: `content` plus find matches and the placeholder. */
   decos: DecorationSet
+  /** Tags, bare URLs and links to missing notes, kept up to date block by block. */
+  content: DecorationSet
   /** The app's lookup keys of every note (see noteExists). */
   keys: Set<string>
   query: string
@@ -68,37 +71,82 @@ function findMatches(doc: Node, query: string): {from: number; to: number}[] {
   return out
 }
 
-function build(doc: Node, keys: Set<string>, matches: {from: number; to: number}[], current: number): DecorationSet {
-  const decos: Decoration[] = []
-  doc.descendants((node, pos) => {
-    if (node.type === nodes.code_block || node.type === nodes.frontmatter) return false
+/** Adds the decorations of the textblock `block` at `pos` to `out`: tags, bare URLs, links to missing notes. */
+function blockDecorations(block: Node, pos: number, keys: ReadonlySet<string>, out: Decoration[]): void {
+  if (block.type === nodes.code_block || block.type === nodes.frontmatter) return
+  block.forEach((node, offset) => {
+    const at = pos + 1 + offset
     if (node.type === nodes.wikilink && !noteExists(keys, node.attrs.target)) {
-      decos.push(Decoration.node(pos, pos + node.nodeSize, {class: 'missing'}))
+      out.push(Decoration.node(at, at + node.nodeSize, {class: 'missing'}))
     }
-    if (!node.isText) return true
-    if (marks.code.isInSet(node.marks)) return false
+    if (!node.isText || marks.code.isInSet(node.marks)) return
     const text = node.text!
     if (!marks.link.isInSet(node.marks)) {
       for (const m of text.matchAll(URL_RE)) {
-        const from = pos + m.index!
-        decos.push(Decoration.inline(from, from + m[0].length, {class: 'bare-url', 'data-href': m[0]}))
+        const from = at + m.index!
+        out.push(Decoration.inline(from, from + m[0].length, {class: 'bare-url', 'data-href': m[0]}))
       }
     }
     for (const m of text.matchAll(TAG)) {
-      const from = pos + m.index! + m[1].length
+      const from = at + m.index! + m[1].length
       const tag = m[2]
-      decos.push(Decoration.inline(from, from + tag.length + 1, {class: 'tag', 'data-tag': tag}))
+      out.push(Decoration.inline(from, from + tag.length + 1, {class: 'tag', 'data-tag': tag}))
     }
+  })
+}
+
+/** The tags, bare URLs and missing-note links of the whole document. */
+function contentDecorations(doc: Node, keys: ReadonlySet<string>): DecorationSet {
+  const out: Decoration[] = []
+  doc.descendants((node, pos) => {
+    if (!node.isTextblock) return true
+    blockDecorations(node, pos, keys, out)
     return false
   })
+  return DecorationSet.create(doc, out)
+}
+
+/**
+ * `set` (from contentDecorations) after `tr`: mapped, with the textblocks the transaction
+ * touched decorated afresh. Typing in a long note so costs a block, not the whole document.
+ */
+function updateContent(set: DecorationSet, tr: Transaction, keys: ReadonlySet<string>): DecorationSet {
+  const doc = tr.doc
+  let next = set.map(tr.mapping, doc)
+  const touched: [number, number][] = []
+  tr.mapping.maps.forEach((map, i) => {
+    const later = tr.mapping.slice(i + 1)
+    map.forEach((_oldFrom, _oldTo, from, to) => touched.push([later.map(from, -1), later.map(to, 1)]))
+  })
+  const done = new Set<number>()
+  const out: Decoration[] = []
+  const size = doc.content.size
+  for (const [from, to] of touched) {
+    // One position beyond each side, so that a block ending or starting at the edit counts.
+    doc.nodesBetween(Math.max(0, Math.min(from, to) - 1), Math.min(size, Math.max(from, to) + 1), (node, pos) => {
+      if (!node.isTextblock) return true
+      if (!done.has(pos)) {
+        done.add(pos)
+        next = next.remove(next.find(pos, pos + node.nodeSize))
+        blockDecorations(node, pos, keys, out)
+      }
+      return false
+    })
+  }
+  return next.add(doc, out)
+}
+
+/** `content` with the find matches and the empty-note placeholder. */
+function withExtras(doc: Node, content: DecorationSet, matches: {from: number; to: number}[], current: number): DecorationSet {
+  const extra: Decoration[] = []
   matches.forEach((m, i) => {
-    decos.push(Decoration.inline(m.from, m.to, {class: i === current ? 'find-match find-current' : 'find-match'}))
+    extra.push(Decoration.inline(m.from, m.to, {class: i === current ? 'find-match find-current' : 'find-match'}))
   })
   const first = doc.firstChild
   if (doc.childCount === 1 && first && first.type === nodes.paragraph && first.content.size === 0) {
-    decos.push(Decoration.node(0, first.nodeSize, {class: 'placeholder'}))
+    extra.push(Decoration.node(0, first.nodeSize, {class: 'placeholder'}))
   }
-  return DecorationSet.create(doc, decos)
+  return extra.length ? content.add(doc, extra) : content
 }
 
 export function decorationsPlugin(): Plugin<DecorationState> {
@@ -106,18 +154,24 @@ export function decorationsPlugin(): Plugin<DecorationState> {
     key: decorationsKey,
     state: {
       init(_config, state) {
-        return {decos: build(state.doc, new Set(), [], 0), keys: new Set(), query: '', current: 0, matches: []}
+        const content = contentDecorations(state.doc, new Set())
+        return {decos: withExtras(state.doc, content, [], 0), content, keys: new Set(), query: '', current: 0, matches: []}
       },
       apply(tr, prev, _old, state) {
         const meta = tr.getMeta(decorationsKey) as Meta | undefined
         if (!tr.docChanged && !meta) return prev
         const keys = meta?.keys ? new Set(meta.keys) : prev.keys
+        const content = meta?.keys
+          ? contentDecorations(state.doc, keys)
+          : tr.docChanged
+            ? updateContent(prev.content, tr, keys)
+            : prev.content
         const query = meta?.query ?? prev.query
         const matches = findMatches(state.doc, query)
         let current = meta?.current ?? (meta?.query !== undefined ? 0 : prev.current)
         if (matches.length) current = ((current % matches.length) + matches.length) % matches.length
         else current = 0
-        return {decos: build(state.doc, keys, matches, current), keys, query, current, matches}
+        return {decos: withExtras(state.doc, content, matches, current), content, keys, query, current, matches}
       },
     },
     props: {
