@@ -58,6 +58,9 @@ interface AttachmentDao {
 
     @Query("UPDATE attachments SET size = :size WHERE name = :name")
     suspend fun setSize(name: String, size: Long)
+
+    @Query("UPDATE attachments SET name = :to WHERE name = :from")
+    suspend fun rename(from: String, to: String)
 }
 
 /** An attachment larger than [AttachmentStore.MAX_BYTES] was refused. */
@@ -198,6 +201,20 @@ class AttachmentStore(
             }
         } finally {
             tmp.delete()
+        }
+    }
+
+    /**
+     * Gives the stored attachment [from] the name [to] (not taken), which notes mention it by
+     * (a synced file stored under another name while [to] was taken). Returns whether it did.
+     */
+    suspend fun rename(from: String, to: String): Boolean = withContext(Dispatchers.IO) {
+        naming.withLock {
+            val source = file(from) ?: return@withLock false
+            if (file(to) != null || dao.get(to) != null) return@withLock false
+            if (!source.renameTo(File(dir, to))) return@withLock false
+            dao.rename(source.name, to)
+            true
         }
     }
 

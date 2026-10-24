@@ -169,6 +169,11 @@ class SyncPlannerTest {
         val leftOut = Folder("Archive/A.md" to ("text, edited on the way" to 70L))
         val plan = SyncPlanner.plan(emptyList(), listOf(note(1, "A", "edited here too")), pairs, leftOut::hash, { leftOut.list })
         assertThat(plan).containsExactly(Adopt(1, "A.md", "Archive/A.md", writeNote = false))
+        // A template of the name, there from before (older than the last sync): the note's file
+        // was deleted, not moved there.
+        val template = Folder("Templates/A.md" to ("a template" to 10L))
+        assertThat(SyncPlanner.plan(emptyList(), listOf(note(1, "A", "text")), pairs, template::hash, { template.list }))
+            .containsExactly(TrashNote(1, "A.md"))
         // Two of that name: neither is taken for it.
         val two = Folder("Archive/A.md" to ("one" to 70L), "Old/A.md" to ("two" to 70L))
         assertThat(SyncPlanner.plan(emptyList(), listOf(note(1, "A", "text")), pairs, two::hash, { two.list }))

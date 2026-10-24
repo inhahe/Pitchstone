@@ -134,11 +134,13 @@ object SyncPlanner {
             // Into a folder left out of sync, for a note that can follow it there. The files there
             // are not new to this sync: the moved one also has the pair's time (a move keeps a
             // file's time; a file there from before has its own). Edited on the way, it is the
-            // only file there of its name, and is not written over.
+            // only file there of its name, and newer than at the last sync (a template of the
+            // name, there from before, is older); it is not written over.
             val movedOut = if (moved != null || note == null || note.trashed) null else {
                 val name = pair.path.substringAfterLast('/')
                 outsideFiles.firstOrNull { it.modified == pair.modified && sameText(it) }
                     ?: outsideFiles.filter { unused(it) && it.path.substringAfterLast('/').equals(name, ignoreCase = true) }.singleOrNull()
+                        ?.takeIf { f -> f.modified != null && pair.modified != null && f.modified > pair.modified }
             }
             if (moved != null && note != null) {
                 usedFiles += moved.path.lowercase()

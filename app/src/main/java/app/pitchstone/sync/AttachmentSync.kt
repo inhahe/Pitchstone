@@ -50,13 +50,21 @@ internal class AttachmentSync(
             val copies = vault.attachments[name]
             val inVault = copies?.firstOrNull { it.path.lowercase() in entries } ?: copies?.minByOrNull { it.path.lowercase() }
             try {
-                // Stored under another name, the row from the last sync says which.
-                val stored = store.file(name) ?: inVault?.let { entries[it.path.lowercase()]?.attachment }?.let(store::file)
+                // Stored under another name (the app had another file of this name), the row from
+                // the last sync says which; that name taken back if it is free now, and if no note
+                // here names the other.
+                var stored = store.file(name)
+                if (stored == null && inVault != null) {
+                    stored = entries[inVault.path.lowercase()]?.attachment?.let(store::file)
+                    if (stored != null && stored.name.lowercase() !in linked && store.rename(stored.name, inVault.entry.name)) {
+                        stored = store.file(inVault.entry.name)
+                    }
+                }
                 when {
                     inVault != null && stored != null -> {
                         if (compare(inVault, stored, entries[inVault.path.lowercase()], problems)) copied++
                         if (!stored.name.equals(inVault.entry.name, ignoreCase = true)) {
-                            problems.putIfAbsent(inVault.path, "stored as ${stored.name}, another file in the app having this name")
+                            problems.putIfAbsent(inVault.path, "kept in the app as ${stored.name}, the app having another file of this name")
                         }
                     }
                     inVault != null -> {
@@ -64,6 +72,11 @@ internal class AttachmentSync(
                         copied++
                     }
                     stored != null -> {
+                        // In the folder already, in a folder left out (it was synced there before).
+                        val leftOutCopy = entries.values.any {
+                            it.attachment != null && vault.excluded.contains(it.path) && it.path.substringAfterLast('/').equals(name, ignoreCase = true)
+                        }
+                        if (leftOutCopy) continue
                         val folder = attachmentFolder(folderSetting, noteFolder)
                         // A folder left out of sync gets nothing written into it.
                         if (vault.excluded.contains(joinPath(folder, stored.name))) continue

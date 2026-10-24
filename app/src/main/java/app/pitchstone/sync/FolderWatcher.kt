@@ -32,9 +32,15 @@ class FolderWatcher(private val resolver: ContentResolver, private val onChange:
         const val OWN_WRITES_MS = 1500L
         /** At most this many folders are watched; the rest wait for the other syncs. */
         const val MAX_FOLDERS = 300
+        /**
+         * The providers that announce changes to a listed folder: Android's storage (phone,
+         * memory cards) and its Downloads. Listing a cloud provider's folders would only cost.
+         */
+        val ANNOUNCING = setOf("com.android.externalstorage.documents", "com.android.providers.downloads.documents")
     }
 
-    private val handler = Handler(HandlerThread("pitchstone-folder-watch").apply { start() }.looper)
+    // Started when first needed: not at all for those who sync no folder.
+    private val handler by lazy { Handler(HandlerThread("pitchstone-folder-watch").apply { start() }.looper) }
     private var tree: Uri? = null
     private var excluded = Excluded(emptyList())
     /** The open listings, by folder document id, and each folder's path in the synced folder. */
@@ -55,6 +61,7 @@ class FolderWatcher(private val resolver: ContentResolver, private val onChange:
      * when the app comes to the front, and when the folder or the folders left out change.
      */
     fun watch(treeUri: Uri, excluded: Collection<String>) {
+        if (treeUri.authority !in ANNOUNCING) return
         handler.post { watchNow(treeUri, Excluded(excluded)) }
     }
 
@@ -79,6 +86,11 @@ class FolderWatcher(private val resolver: ContentResolver, private val onChange:
     fun release(wroteIn: Set<String>) {
         handler.post {
             holding = false
+            // Not watching (any more): nothing to sync for.
+            if (tree == null) {
+                announcedWhileHeld.clear()
+                return@post
+            }
             ownFolders = paths.filterValues { it.lowercase() in wroteIn }.keys
             ownWritesUntil = SystemClock.uptimeMillis() + OWN_WRITES_MS
             if (announcedWhileHeld.any { it == null || it !in ownFolders }) schedule()
@@ -189,6 +201,7 @@ class FolderWatcher(private val resolver: ContentResolver, private val onChange:
         listings = HashMap()
         paths = HashMap()
         tree = null
-        holding = false
+        // What was announced is no longer watched; a sync running keeps its hold (it is the sync's).
+        announcedWhileHeld.clear()
     }
 }

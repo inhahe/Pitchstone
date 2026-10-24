@@ -489,6 +489,8 @@ class FolderSyncTest {
         val id = repo.create("Done", "finished")
         sync(excluded = leftOut)
         put("Archive/Done.md", "finished, and a last line")
+        // Edited after the last sync (which wrote Done.md at the real time).
+        file("Archive/Done.md").setLastModified(file("Done.md").lastModified() + 60_000)
         assertThat(file("Done.md").delete()).isTrue()
         val report = sync(excluded = leftOut)
         assertThat(report.trashedNotes).isEqualTo(0)
@@ -547,6 +549,46 @@ class FolderSyncTest {
         assertThat(first.problems).isEmpty()
         assertThat(first.attachments).isEqualTo(1)
         assertThat(store.file("Invoice #42.pdf")!!.readBytes()).isEqualTo(byteArrayOf(4, 2))
+        assertThat(sync().changes).isEqualTo(0)
+    }
+
+    @Test
+    fun `an attachment synced into a folder later left out is not written out again`() = runBlocking<Unit> {
+        put("Read.md", "[[old.pdf]]")
+        putBytes("Archive/old.pdf", byteArrayOf(7))
+        sync()
+        assertThat(store.file("old.pdf")).isNotNull()
+        sync(excluded = setOf("Archive"))
+        assertThat(file("old.pdf").exists()).isFalse()
+        assertThat(vault.walkTopDown().count { it.name == "old.pdf" }).isEqualTo(1)
+    }
+
+    @Test
+    fun `notes whose files all went while hidden folders stay are held back, however few`() = runBlocking<Unit> {
+        put(".obsidian/app.json", "{}")
+        repo.create("One", "1")
+        repo.create("Two", "2")
+        sync()
+        assertThat(file("One.md").delete() && file("Two.md").delete()).isTrue()
+        assertThat(sync().heldBack).isEqualTo(2)
+        assertThat(repo.allNotes()).hasSize(2)
+    }
+
+    @Test
+    fun `a file stored under another name takes its own back once that is free`() = runBlocking<Unit> {
+        // The app has a row of that name (its file gone): the synced one is stored as "cat 1.png".
+        db.attachments().insert(app.pitchstone.data.AttachmentEntity("cat.png", 1, now))
+        put("Pets.md", "![[cat.png]]")
+        putBytes("cat.png", byteArrayOf(9))
+        sync()
+        assertThat(store.file("cat 1.png")).isNotNull()
+        assertThat(sync().problems.single()).contains("kept in the app as cat 1.png")
+        // The other one goes (as clean-up would drop it): the name is free.
+        db.attachments().delete(listOf("cat.png"))
+        val report = sync()
+        assertThat(report.problems).isEmpty()
+        assertThat(store.file("cat.png")!!.readBytes()).isEqualTo(byteArrayOf(9))
+        assertThat(store.file("cat 1.png")).isNull()
         assertThat(sync().changes).isEqualTo(0)
     }
 

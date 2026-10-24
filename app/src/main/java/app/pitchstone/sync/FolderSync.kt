@@ -102,16 +102,8 @@ class FolderSync(
         private const val MIME = "application/octet-stream"
 
         /** "Title (2).md", "Title (3).md"... whichever is free in [dir], as a clash numbers a note's file. */
-        private fun numbered(name: String, dir: DocumentDir): String {
-            val base = name.substringBeforeLast('.')
-            val ext = name.substringAfterLast('.', "")
-            var n = 2
-            while (true) {
-                val candidate = "$base ($n)" + if (ext.isEmpty()) "" else ".$ext"
-                if (dir.find(candidate) == null) return candidate
-                n++
-            }
-        }
+        private fun numbered(name: String, dir: DocumentDir): String =
+            FileNames.unique(name.substringBeforeLast('.'), name.substringAfterLast('.', ""), dir.list().mapTo(HashSet()) { it.name.lowercase() })
 
         /** "name 1.ext", "name 2.ext"... whichever is free in both [a] and [b]. */
         private fun freeName(name: String, a: DocumentDir, b: DocumentDir): String {
@@ -230,7 +222,10 @@ class FolderSync(
         // now (a card not there, a folder moved) than one emptied. Nothing is done, not even
         // forgetting pairs, until the user says which.
         val pairedLive = s.pairs.count { planned[it.noteId]?.trashed == false }
-        if (vault.listedNothing && pairedLive > 0 && gone == GoneFiles.ASK) {
+        // No markdown file anywhere, the folders left out included (where the last note may have
+        // moved); hidden files do not count, a vault emptied keeping its .obsidian being as suspect.
+        val noNotes by lazy { vault.notes.isEmpty() && vault.outside().isEmpty() }
+        if (pairedLive > 0 && noNotes && gone == GoneFiles.ASK) {
             return@withContext SyncReport(at = clock(), heldBack = pairedLive)
         }
 
@@ -241,7 +236,7 @@ class FolderSync(
         val trashing = plan.filterIsInstance<SyncAction.TrashNote>()
         var heldBack = 0
         // (With an empty listing, only a choice the user made gets here.)
-        if (trashing.size > TRASH_LIMIT || (trashing.isNotEmpty() && vault.listedNothing)) {
+        if (trashing.size > TRASH_LIMIT || (trashing.isNotEmpty() && noNotes)) {
             when (gone) {
                 GoneFiles.ASK -> {
                     heldBack = trashing.size

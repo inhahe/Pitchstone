@@ -27,9 +27,7 @@ function baseName(reference: string): string {
 
 /** Whether a reference (`pic.png`, `assets/pic.png`) names an image. */
 export function isImageName(reference: string): boolean {
-  const name = baseName(reference)
-  const dot = name.lastIndexOf('.')
-  return dot > 0 && IMAGE_EXTENSIONS.has(name.slice(dot + 1).toLowerCase())
+  return IMAGE_EXTENSIONS.has(extension(reference))
 }
 
 function extension(reference: string): string {

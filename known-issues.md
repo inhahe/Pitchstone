@@ -90,10 +90,10 @@
   links to it. One over 100 MB is not stored (Settings lists it). A file no note links to is not
   synced, nor is one in a hidden folder or a folder left out.
 - **A file moved into a folder left out** is recognised by its text and time, or, edited on the
-  way, as the only file of its name there. So a note whose file is deleted while a file of the
-  same name sits in a left-out folder moves into that folder (left alone there) rather than to
-  the trash. A note moved into a left-out folder where its name is taken gets a numbered file
-  there, `Title (2).md`.
+  way, as the only file of its name there, changed since the last sync. So a note whose file is
+  deleted just as a file of the same name in a left-out folder is edited moves into that folder
+  (left alone there) rather than to the trash. A note moved into a left-out folder where its
+  name is taken gets a numbered file there, `Title (2).md`.
 - A folder in the vault whose name the app spells otherwise ("Q&A: misc" is `Q&A misc`, a
   colon being something files cannot hold) is the app's folder of that spelling; a folder
   made in the vault takes the vault's spelling.

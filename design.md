@@ -322,7 +322,8 @@ elsewhere: it was just moved there in the app, and its file is moved after it, n
 at the next sync. The other way, a paired file gone from sync is looked for in those folders
 too (`Vault.outside`, listed only then): a file there before has its own time, so the moved one
 is the one with the pair's size, text and time (a move keeps a file's time), or, edited on the
-way, the only file there of its name, which is then not written over. The note moves after it
+way, the only file there of its name and newer than at the last sync (a template of the name is
+older), which is then not written over. The note moves after it
 (Adopt). Taken back into sync, a folder's notes and files meet as at a first sync, by natural
 path.
 
@@ -360,9 +361,9 @@ up again next time. Guards, each with a test that fails without it:
   where the file is.
 - More than `TRASH_LIMIT` (5) notes losing their files at once are held back
   (`SyncReport.heldBack`) until the user picks `GoneFiles.TRASH_NOTES` or `WRITE_AGAIN`. A
-  folder that lists nothing at all, hidden files included (`Vault.listedNothing`: a card not
-  there, a folder moved), while notes are paired holds back everything, forgetting no pair,
-  until the user picks.
+  folder with no markdown file anywhere, its left-out folders included (a card not there, a
+  folder moved, a vault emptied but for its `.obsidian`), while notes are paired holds back
+  everything, forgetting no pair, until the user picks.
 - Deletions are moves: files to the folder's `.trash` (numbered if the name is taken there),
   notes to the app's trash; the text a conflict does not keep becomes a version
   (`forceRevision`, or `keepVersion` for the file's text, stored before the file is
@@ -378,7 +379,10 @@ mentions, one only in the folder is stored (`addOrReuse`), one only in the app i
 Obsidian's `attachmentFolderPath` (`.obsidian/app.json`: `/`, a folder, or `./…` beside the
 note; nothing is written into a folder left out), and one changed in the folder since its row
 replaces the app's copy (`AttachmentStore.replace`, an atomic move). Of copies in several
-folders, the one synced before is used, else the first by path. Files are hashed as they are
+folders, the one synced before is used, else the first by path. One synced before into
+a folder now left out is not written out again. One stored under another name (the app had
+another file of that name) is found through its row, and gets its own name back
+(`AttachmentStore.rename`) once that is free and no note in sync names the other. Files are hashed as they are
 read, not held in memory. Two different files of one name are both left, reported, and
 remembered as a clash (the row's hash starts `clash:`), so a later change to the folder's copy
 never replaces the app's; the clash ends when the two are the same. Sync never deletes an
@@ -389,7 +393,8 @@ conflated request channel with a 1.5 s debounce, fed when the process comes to t
 (`ProcessLifecycleOwner`: `onFront`), when an editor session ends, and by `FolderWatcher`
 while the app is in front. Android's storage provider (phone storage, memory cards) watches a
 folder for as long as a listing of it is open, and announces each change at that folder's
-children URI; so the watcher keeps a listing of every folder synced open (at most 300, not
+children URI (it and Downloads do; cloud providers do not, and are not watched); so the watcher
+keeps a listing of every folder synced open (at most 300, not
 hidden, not left out: listed again after each sync, the new listings opened before the old
 close) and listens to the provider's authority, keeping the announcements for folders under
 the synced one, and calls once they have been quiet for 2 s. A folder that announces a change

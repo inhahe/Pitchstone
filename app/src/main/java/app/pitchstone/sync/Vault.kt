@@ -50,13 +50,6 @@ internal class Vault private constructor(val root: DocumentDir, val excluded: Ex
     private val outsideNotes = HashMap<String, Located>()
     private var outsideListed = false
 
-    /**
-     * Whether the folder listed nothing at all, hidden files included: one that cannot be read
-     * right now (a card not there, a folder moved) rather than one whose notes were deleted.
-     */
-    var listedNothing = false
-        private set
-
     /** The folders this sync wrote into (lower-cased; "" the top), and their parents: see [touch]. */
     val touched = HashSet<String>()
 
@@ -100,7 +93,7 @@ internal class Vault private constructor(val root: DocumentDir, val excluded: Ex
     fun outside(): List<VaultFile> {
         if (!outsideListed) {
             outsideListed = true
-            for ((path, dir) in excludedDirs) walk(dir, path, { outsideNotes[it.path.lowercase()] = it })
+            for ((path, dir) in excludedDirs) walk(dir, path) { outsideNotes[it.path.lowercase()] = it }
         }
         return outsideNotes.values.map { it.file }
     }
@@ -108,8 +101,8 @@ internal class Vault private constructor(val root: DocumentDir, val excluded: Ex
     private val Located.file get() = VaultFile(path, entry.lastModified, entry.size)
 
     /** Lists [dir] (at [path]) and below, giving [note] each markdown file; attachments and folders go to this vault. */
-    private fun walk(dir: DocumentDir, path: String, note: (Located) -> Unit, entries: List<DocEntry> = dir.list()) {
-        for (entry in entries) {
+    private fun walk(dir: DocumentDir, path: String, note: (Located) -> Unit) {
+        for (entry in dir.list()) {
             // Hidden: .obsidian, .trash, .git, .stfolder (Syncthing) and the like.
             if (entry.name.startsWith(".")) continue
             val child = joinPath(path, entry.name)
@@ -131,9 +124,7 @@ internal class Vault private constructor(val root: DocumentDir, val excluded: Ex
         fun scan(root: DocumentDir, excluded: Collection<String>): Vault {
             val vault = Vault(root, Excluded(excluded))
             vault.dirs[""] = root
-            val top = root.list()
-            vault.listedNothing = top.isEmpty()
-            vault.walk(root, "", { vault.notes[it.path.lowercase()] = it }, top)
+            vault.walk(root, "", { vault.notes[it.path.lowercase()] = it })
             return vault
         }
 
