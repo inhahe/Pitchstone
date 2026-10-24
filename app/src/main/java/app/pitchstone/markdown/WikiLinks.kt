@@ -41,10 +41,11 @@ object WikiLinks {
      * Finds the wikilinks in [src] the way the editor's parser (markdown-it, see
      * editor/src/markdown/md.ts) does: `[[` up to the first `]]`, with no brackets or line
      * breaks between; not escaped by a backslash; outside the [excluded] ranges (code and raw
-     * HTML). The target is the text before the first `|`; a backslash right before that `|`
-     * (the table-safe spelling `[[a\|b]]`) is dropped.
+     * HTML). In the [tables] ranges an unescaped `|` between them ends the attempt: a row is
+     * split into cells first. The target is the text before the first `|`; a backslash right
+     * before that `|` (the table-safe spelling `[[a\|b]]`) is dropped.
      */
-    fun scan(src: String, excluded: List<IntRange> = emptyList()): List<WikiLinkMatch> {
+    fun scan(src: String, excluded: List<IntRange> = emptyList(), tables: List<IntRange> = emptyList()): List<WikiLinkMatch> {
         val sorted = excluded.sortedBy { it.first }
         val out = ArrayList<WikiLinkMatch>()
         var i = src.indexOf("[[")
@@ -62,6 +63,11 @@ object WikiLinks {
             if (close < 0) break
             val inner = src.substring(i + 2, close)
             if (inner.any { it == '[' || it == ']' || it == '\n' }) {
+                i = src.indexOf("[[", i + 1)
+                continue
+            }
+            val start = i
+            if (tables.any { start in it } && inner.indices.any { inner[it] == '|' && !isEscaped(src, start + 2 + it) }) {
                 i = src.indexOf("[[", i + 1)
                 continue
             }

@@ -29,7 +29,9 @@ app/                     The Android app (package app.pitchstone)
 
 The Gradle task `:app:buildEditor` runs `node editor/build.mjs` into
 `app/build/generated/editorAssets/editor`, registered as generated assets through the AGP
-variant API; the bundle is never committed.
+variant API; the bundle is never committed. It runs `npm ci` first when `node_modules` is
+missing or older than `package-lock.json` (npm's `node_modules/.package-lock.json` records the
+install).
 
 ## The markdown contract
 
@@ -66,8 +68,9 @@ parsed back; blocks that still differ are re-rendered at level 1.
 So a typed `*`, `#`, `[[`, `- ` is always literal: with markdown shortcuts off nothing turns it
 into formatting, and the serializer escapes whatever the parser would otherwise read as
 markup. A task item keeps its first paragraph even when empty, since the checkbox is written
-on it (`- [ ]` over a nested list). Tests: `test/roundtrip.test.ts`, all 652 CommonMark spec examples
-(`test/spec.test.ts`), and a fuzzer (`test/fuzz.test.ts`, `FUZZ_SEED`/`FUZZ_CASES`) that
+on it (`- [ ]` over a nested list). Tests: `test/roundtrip.test.ts`, all 652 CommonMark spec
+examples (`test/spec.test.ts`: each must round-trip, and must also render as the spec says,
+with `breaks` off, except the three where `[[` is a wikilink), and a fuzzer (`test/fuzz.test.ts`, `FUZZ_SEED`/`FUZZ_CASES`) that
 generates documents rich in markdown punctuation, nested containers, tables, footnotes,
 wikilinks and HTML, and shrinks any failure to a minimal document. 800,000 generated
 documents pass.
@@ -83,8 +86,9 @@ documents pass.
   where the whole match is already in the document. Backspace right after a rule undoes it.
 - **Clipboard**: copy gives markdown (shortcuts on) or plain text; pasted plain text is parsed
   as markdown only with shortcuts on.
-- **Plugins**: decorations (tags, bare URLs, missing-note links, find matches, placeholder),
-  structure fix-ups (table header row, task items start with a paragraph), toolbar state
+- **Plugins**: decorations (tags, bare URLs, missing-note links, find matches, placeholder;
+  the first three are mapped through each edit and recomputed only for the textblocks it
+  touched, so typing costs a block, not the note), structure fix-ups (table header row, task items start with a paragraph), toolbar state
   reports, link bubble, `[[` note suggestions.
 - **Links** (`links.ts`): which notes exist is decided by the app's own rules (see Data): the
   app sends every note's lookup keys, and `noteExists` matches a link's whole name, then its
@@ -139,7 +143,9 @@ and always write the newest content. Before anything that leaves the note (back,
 link or note, sharing, exporting, going to the background) `flushThen` asks the page for its
 pending change synchronously, saves, then continues. The view model also observes the note in
 the database: a change that is none of `saved`/`inFlight`/`content` came from elsewhere
-(restored version, link rename) and is reloaded into the page.
+(restored version, link rename). The page is asked first for edits it has not reported; those,
+and any not saved yet, win and are saved over the outside change. Otherwise the page is
+reloaded with it (a reload alone would drop the last moments of typing).
 
 Every way out of a note is an `Exit` (back, a tapped `#tag`, a followed `[[link]]`) taken only
 once everything is saved: if the save failed or the page could not produce markdown, the note
@@ -219,13 +225,15 @@ Where the two parsers could disagree, the app follows markdown-it:
 - commonmark-java cannot hand `[` to a custom parser, so `WikiLinks.scan` finds wikilinks with
   markdown-it's rule (first `]]`, no brackets/newlines inside, escapes, `\|` in tables),
   skipping ranges where `[[` is literal (code, raw HTML, autolinks, definitions; found by a
-  first parse with source spans). Each link is replaced by a private-use placeholder that a
+  first parse with source spans). In table rows an unescaped `|` ends the attempt, since the
+  row is split into cells first. Each link is replaced by a private-use placeholder that a
   custom inline parser turns into a `WikiLink` node. `LinkRewriter` uses the same scan to
   rename links in place.
 - `==highlight==` is a custom delimiter processor.
 
 `Html` renders with raw HTML escaped and unsafe URLs dropped; email output uses inline styles
-and ☐/☑ characters for tasks. `PlainText` renders structure without symbols.
+and ☐/☑ characters for tasks, whose list items show no bullet (`class="task"` in a document,
+an inline `list-style:none` in email). `PlainText` renders structure without symbols.
 
 ## Export and import
 
@@ -252,9 +260,11 @@ as they are read since a provider's reported size can be missing; a larger file 
 ## Sharing
 
 Email without attachment is `ACTION_SENDTO mailto:` with subject, `EXTRA_HTML_TEXT` and a
-styled `EXTRA_TEXT` (Gmail renders the Spanned). With an attachment it is `ACTION_SEND`
-addressed to each email app by package (from a `mailto:` query; `<queries>` in the manifest):
-a `mailto:` selector no longer resolves for apps targeting Android 15. Shared files are
+styled `EXTRA_TEXT` (Gmail renders the Spanned). With an attachment it is an `ACTION_SEND`
+chooser that leaves out every app that is not an email app (`EXTRA_EXCLUDE_COMPONENTS`; email
+apps are those answering a `mailto:` query, others those answering `SEND`, both declared in
+the manifest's `<queries>`). A `mailto:` selector no longer resolves for apps targeting
+Android 15, and a chooser shows at most two `EXTRA_INITIAL_INTENTS` since Android 10. Shared files are
 written to `cache/shared` and served by a FileProvider; files older than an hour are removed.
 
 ## Testing on a device

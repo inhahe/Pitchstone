@@ -264,6 +264,42 @@ class NoteRepositoryTest {
     }
 
     @Test
+    fun `a rename through a blank title still updates links from the original name`() = runBlocking<Unit> {
+        val target = repo.create("Plan", "")
+        val index = repo.create("Index", "[[Plan]]")
+        repo.save(target, "", "")
+        repo.applyRename(target, updateLinks = true) // closed while untitled
+        repo.save(target, "Roadmap", "")
+        repo.applyRename(target, updateLinks = true)
+        assertThat(repo.note(index)!!.body).isEqualTo("[[Roadmap]]")
+    }
+
+    @Test
+    fun `notes in the trash do not decide how a folder is spelled, and come back in its spelling`() = runBlocking<Unit> {
+        val trashed = repo.create("Old", "", "work")
+        repo.deleteFolder("work") // its note goes to the trash; the folder is gone from the list
+        assertThat(repo.folders().first()).isEmpty()
+        repo.createFolder("Work")
+        assertThat(repo.folders().first()).containsExactly("Work")
+        repo.restore(listOf(trashed))
+        assertThat(repo.note(trashed)!!.folder).isEqualTo("Work")
+    }
+
+    @Test
+    fun `importing the same files again adds nothing, whatever the folder's case`() = runBlocking<Unit> {
+        repo.createFolder("Work")
+        val file = app.pitchstone.export.ImportFile(
+            title = "Plan", extension = "md", folder = "work", lastModified = null, size = 4,
+            open = { "text".byteInputStream() },
+        )
+        val first = app.pitchstone.export.Importer.import(repo, listOf(file), "", keepFolders = true, txtAsMarkdown = false)
+        assertThat(first.imported).isEqualTo(1)
+        val second = app.pitchstone.export.Importer.import(repo, listOf(file), "", keepFolders = true, txtAsMarkdown = false)
+        assertThat(second.imported).isEqualTo(0)
+        assertThat(second.alreadyPresent).isEqualTo(1)
+    }
+
+    @Test
     fun `notes larger than a database row can hold are refused`() = runBlocking<Unit> {
         val big = "x".repeat(NoteRepository.MAX_NOTE_BYTES + 1)
         assertThrows(NoteTooLargeException::class.java) { runBlocking { repo.create("T", big) } }

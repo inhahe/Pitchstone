@@ -11,6 +11,11 @@
             <action android:name="android.intent.action.SENDTO" />
             <data android:scheme="mailto" />
         </intent>
+        <!-- Apps that take a shared note file: the email chooser leaves out those not email apps. -->
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/*" />
+        </intent>
     </queries>
 
     <application

@@ -11,7 +11,7 @@ plugins {
 /**
  * Bundles the WYSIWYG editor (../editor, TypeScript + ProseMirror) into `outputDir/editor`,
  * which becomes part of the app's assets. Needs Node.js on PATH; installs the editor's npm
- * dependencies first if they are missing.
+ * dependencies first when they are missing or older than package-lock.json.
  */
 abstract class BuildEditorTask : DefaultTask() {
     @get:InputDirectory
@@ -35,7 +35,10 @@ abstract class BuildEditorTask : DefaultTask() {
     fun bundle() {
         val dir = editorDir.get().asFile
         val windows = System.getProperty("os.name").lowercase().contains("windows")
-        if (!dir.resolve("node_modules").isDirectory) {
+        // npm records what it installed in node_modules/.package-lock.json: a newer
+        // package-lock.json (a dependency bumped) means node_modules is out of date.
+        val installed = dir.resolve("node_modules/.package-lock.json")
+        if (!installed.isFile || dir.resolve("package-lock.json").lastModified() > installed.lastModified()) {
             exec.exec {
                 workingDir(dir)
                 commandLine(if (windows) listOf("cmd", "/c", "npm", "ci") else listOf("npm", "ci"))

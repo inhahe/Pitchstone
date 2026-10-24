@@ -1,6 +1,7 @@
 package app.pitchstone.share
 
 import android.content.ClipData
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -33,9 +34,10 @@ object Sharing {
      * (EXTRA_TEXT as a Spanned), which is what Gmail and most mail apps render.
      *
      * Without an attachment this is ACTION_SENDTO to mailto:, the documented way to compose an
-     * email. Attachments need ACTION_SEND, which any app may take; it is addressed to each email
-     * app by package instead (a mailto: selector no longer resolves for apps targeting Android
-     * 15, whose explicit intents must match the receiving activity's filters).
+     * email. Attachments need ACTION_SEND, which any app may take: its chooser leaves out every
+     * app that is not an email app (EXTRA_EXCLUDE_COMPONENTS). A mailto: selector no longer
+     * resolves for apps targeting Android 15, and the chooser shows at most two
+     * EXTRA_INITIAL_INTENTS since Android 10, so neither can list the email apps.
      */
     fun emailIntent(context: Context, title: String, markdown: String, format: ShareFormat, attach: Boolean): Intent {
         fun Intent.withBody(): Intent = apply {
@@ -53,19 +55,19 @@ object Sharing {
             val compose = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")).withBody()
             return if (apps.size > 1) Intent.createChooser(compose, "Email note") else compose
         }
+        if (apps.isEmpty()) return Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")).withBody()
         val uri = noteFile(context, title, markdown, format)
-        val targeted = apps.map { pkg ->
-            Intent(Intent.ACTION_SEND).withBody().apply {
-                type = if (format == ShareFormat.HTML) "text/html" else "text/plain"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                clipData = ClipData.newRawUri(null, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                setPackage(pkg)
-            }
+        val send = Intent(Intent.ACTION_SEND).withBody().apply {
+            type = if (format == ShareFormat.HTML) "text/html" else "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newRawUri(null, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        if (targeted.size <= 1) return targeted.firstOrNull() ?: Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")).withBody()
-        return Intent.createChooser(targeted.first(), "Email note")
-            .putExtra(Intent.EXTRA_INITIAL_INTENTS, targeted.drop(1).toTypedArray())
+        if (apps.size == 1) return send.setPackage(apps.single())
+        val others = context.packageManager.queryIntentActivities(send, 0)
+            .filter { it.activityInfo.packageName !in apps }
+            .map { ComponentName(it.activityInfo.packageName, it.activityInfo.name) }
+        return Intent.createChooser(send, "Email note").putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, others.toTypedArray())
     }
 
     /** Share the note as text with any app. */

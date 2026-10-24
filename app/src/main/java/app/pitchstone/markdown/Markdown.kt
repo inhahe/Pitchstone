@@ -4,10 +4,12 @@ import org.commonmark.Extension
 import org.commonmark.ext.autolink.AutolinkExtension
 import org.commonmark.ext.footnotes.FootnotesExtension
 import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension
+import org.commonmark.ext.gfm.tables.TableBlock
 import org.commonmark.ext.gfm.tables.TablesExtension
 import org.commonmark.ext.task.list.items.TaskListItemsExtension
 import org.commonmark.node.AbstractVisitor
 import org.commonmark.node.Code
+import org.commonmark.node.CustomBlock
 import org.commonmark.node.FencedCodeBlock
 import org.commonmark.node.HtmlBlock
 import org.commonmark.node.HtmlInline
@@ -68,15 +70,14 @@ object Markdown {
     class Parsed(
         val document: Node,
         val frontMatter: String?,
-        /** The markdown after the front matter, which offsets in [wikiLinks] refer to. */
-        val body: String,
+        /** Offsets are into the markdown after the front matter ([Split.body]). */
         val wikiLinks: List<WikiLinkMatch>,
     )
 
     fun parse(markdown: String): Parsed {
         val split = splitFrontMatter(markdown)
         val body = split.body
-        val links = WikiLinks.scan(body, literalRanges(body))
+        val links = wikiLinks(body)
         val withPlaceholders = StringBuilder(body.length)
         var last = 0
         links.forEachIndexed { i, link ->
@@ -89,36 +90,48 @@ object Markdown {
             .customInlineContentParserFactory(WikiLinkParserFactory(links))
             .customDelimiterProcessor(HighlightDelimiterProcessor())
             .build()
-        return Parsed(parser.parse(withPlaceholders.toString()), split.frontMatter, body, links)
+        return Parsed(parser.parse(withPlaceholders.toString()), split.frontMatter, links)
     }
 
     /** Wikilinks in a note (after its front matter): offsets are into [Split.body]. */
-    fun wikiLinks(body: String): List<WikiLinkMatch> = WikiLinks.scan(body, literalRanges(body))
+    fun wikiLinks(body: String): List<WikiLinkMatch> {
+        val ranges = sourceRanges(body)
+        return WikiLinks.scan(body, ranges.literal, ranges.tables)
+    }
 
     /**
-     * Source ranges where `[[` is literal: code, raw HTML, autolinks and link definitions.
-     * Offsets are into [body].
+     * Source ranges of a note's [body], for finding its wikilinks as the editor does.
+     *
+     * @property literal where `[[` is literal: code, raw HTML, autolinks and link definitions
+     * @property tables the table rows, whose cells a link cannot span
      */
-    fun literalRanges(body: String): List<IntRange> {
-        val ranges = ArrayList<IntRange>()
+    class SourceRanges(val literal: List<IntRange>, val tables: List<IntRange>)
+
+    fun sourceRanges(body: String): SourceRanges {
+        val literal = ArrayList<IntRange>()
+        val tables = ArrayList<IntRange>()
         val doc = spanParser.parse(body)
         doc.accept(object : AbstractVisitor() {
-            override fun visit(code: Code) = add(code)
-            override fun visit(block: FencedCodeBlock) = add(block)
-            override fun visit(block: IndentedCodeBlock) = add(block)
-            override fun visit(block: HtmlBlock) = add(block)
-            override fun visit(html: HtmlInline) = add(html)
-            override fun visit(def: LinkReferenceDefinition) = add(def)
+            override fun visit(code: Code) = add(literal, code)
+            override fun visit(block: FencedCodeBlock) = add(literal, block)
+            override fun visit(block: IndentedCodeBlock) = add(literal, block)
+            override fun visit(block: HtmlBlock) = add(literal, block)
+            override fun visit(html: HtmlInline) = add(literal, html)
+            override fun visit(def: LinkReferenceDefinition) = add(literal, def)
             override fun visit(link: Link) {
                 val span = link.sourceSpans.firstOrNull()
-                if (span != null && body.startsWith("<", span.inputIndex)) add(link) else visitChildren(link)
+                if (span != null && body.startsWith("<", span.inputIndex)) add(literal, link) else visitChildren(link)
+            }
+            override fun visit(customBlock: CustomBlock) {
+                if (customBlock is TableBlock) add(tables, customBlock)
+                visitChildren(customBlock)
             }
 
-            private fun add(node: Node) {
-                for (span in node.sourceSpans) ranges += span.inputIndex until span.inputIndex + span.length
+            private fun add(to: MutableList<IntRange>, node: Node) {
+                for (span in node.sourceSpans) to += span.inputIndex until span.inputIndex + span.length
             }
         })
-        return ranges
+        return SourceRanges(literal, tables)
     }
 
     /** Turns the placeholders [parse] put in place of wikilinks into [WikiLink] nodes. */

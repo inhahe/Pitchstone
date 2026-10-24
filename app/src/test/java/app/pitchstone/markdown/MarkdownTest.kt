@@ -22,8 +22,17 @@ class WikiLinksTest {
     @Test
     fun `escaped brackets, code and html are not links`() {
         val md = "\\[[no]] `[[code]]` <a title=\"[[html]]\">x</a>\n\n```\n[[fenced]]\n```\n\n[[yes]]"
-        val links = WikiLinks.scan(md, Markdown.literalRanges(md))
+        val links = Markdown.wikiLinks(md)
         assertThat(links.map { it.target }).containsExactly("yes")
+    }
+
+    @Test
+    fun `in a table a link cannot span cells, as the row is split first`() {
+        // The header has three cells ("[[a", "b]]", "[[c\|d]]"), as its delimiter row says.
+        val md = "| [[a|b]] | [[c\\|d]] |\n| --- | --- | --- |\n| [[e]] | f |\n\nOutside: [[g|h]]"
+        assertThat(Markdown.wikiLinks(md).map { it.target to it.alias }).containsExactly("c" to "d", "e" to null, "g" to "h").inOrder()
+        val index = NoteIndexer.index("t", md)
+        assertThat(index.links).doesNotContain("a")
     }
 
     @Test
@@ -218,6 +227,13 @@ class HtmlTest {
         assertThat(html).contains("☐ ")
         assertThat(html).contains("☑ ")
         assertThat(html).doesNotContain("<input")
+    }
+
+    @Test
+    fun `task items show their box instead of a bullet`() {
+        assertThat(Html.document("T", "- [ ] todo\n- plain")).contains("<li class=\"task\">☐ todo</li>")
+        assertThat(Html.document("T", "- [ ] todo\n- plain")).contains("<li>plain</li>")
+        assertThat(Html.emailBody("- [x] done")).contains("list-style:none")
     }
 
     @Test

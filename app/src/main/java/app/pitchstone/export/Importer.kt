@@ -120,7 +120,8 @@ object Importer {
         txtAsMarkdown: Boolean,
         progress: (Int) -> Unit = {},
     ): ImportResult {
-        val existing = repo.allNotes().map { Triple(it.title, it.folder, it.body) }.toHashSet()
+        // Folders compare ignoring case: a note is stored under an existing folder's spelling.
+        val existing = repo.allNotes().map { Triple(it.title, it.folder.lowercase(), it.body) }.toHashSet()
         var imported = 0
         var present = 0
         val failed = ArrayList<Pair<String, String>>()
@@ -134,11 +135,11 @@ object Importer {
                 } else {
                     val text = readText(f.open())
                     val body = if (f.extension == "txt" && !txtAsMarkdown) plainTextToMarkdown(text) else text
-                    if (Triple(f.title, folder, body) in existing) {
+                    if (Triple(f.title, folder.lowercase(), body) in existing) {
                         present++
                     } else {
                         repo.import(f.title, body, folder, createdAt = null, updatedAt = f.lastModified)
-                        existing += Triple(f.title, folder, body)
+                        existing += Triple(f.title, folder.lowercase(), body)
                         imported++
                     }
                 }

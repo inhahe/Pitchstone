@@ -98,7 +98,8 @@ interface NoteDao {
     @Query("SELECT * FROM folders")
     suspend fun folders(): List<FolderEntity>
 
-    @Query("SELECT DISTINCT folder FROM notes")
+    /** The folders of notes not in the trash (the ones the folder list shows). */
+    @Query("SELECT DISTINCT folder FROM notes WHERE trashedAt IS NULL")
     suspend fun noteFolders(): List<String>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)

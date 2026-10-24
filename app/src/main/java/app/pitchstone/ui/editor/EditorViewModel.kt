@@ -79,7 +79,6 @@ data class Content(val title: String, val markdown: String)
 
 data class EditorUiState(
     val loaded: Boolean = false,
-    val missing: Boolean = false,
     val title: String = "",
     val folder: String = "",
     val pinned: Boolean = false,
@@ -172,7 +171,6 @@ class EditorViewModel(
         viewModelScope.launch {
             val note = repo.note(noteId)
             if (note == null) {
-                _state.update { it.copy(missing = true) }
                 _events.send(EditorEvent.Close)
                 return@launch
             }
@@ -181,7 +179,8 @@ class EditorViewModel(
             saved = c
             openedEmpty = note.title.isBlank() && note.body.isBlank()
             everHadContent = !openedEmpty
-            val mode = if (settings.value.openInReadingMode && !openedEmpty) EditorMode.READ else EditorMode.EDIT
+            // The stored setting, not settings.value: that may still hold the defaults.
+            val mode = if (container.settings.current().openInReadingMode && !openedEmpty) EditorMode.READ else EditorMode.EDIT
             _state.update {
                 it.copy(loaded = true, title = note.title, folder = note.folder, pinned = note.pinned, mode = mode)
             }
@@ -206,15 +205,57 @@ class EditorViewModel(
                 _state.update { it.copy(folder = note.folder, pinned = note.pinned) }
                 val c = Content(note.title, note.body)
                 if (c == saved || c == inFlight || c == content) return@collect
-                saved = c
-                content = c
-                _state.update { it.copy(title = c.title) }
-                if (loadedIntoPage) {
-                    loadedIntoPage = false
-                    loadIntoPage()
-                }
+                takeOutsideChange(c)
             }
         }
+    }
+
+    /**
+     * A version [c] saved by someone else: a restored version, or links rewritten after a
+     * rename. The user's own latest edits win over it: those the page has not reported yet
+     * (asked for first) and those not saved yet are saved over it. Otherwise the page shows [c];
+     * reloading it unasked would drop what was typed in the last moments.
+     */
+    private fun takeOutsideChange(c: Content) {
+        val p = port
+        if (p == null || !loadedIntoPage) {
+            adoptOutsideChange(c)
+            return
+        }
+        p.flush { result ->
+            val pending = pageChange(result)
+            when {
+                pending is PageChange.Error -> pageError = pending.message
+                pending is PageChange.Edited -> onContent(pending.content)
+                content != saved || inFlight != null -> container.appScope.launch { saveNow() }
+                else -> adoptOutsideChange(c)
+            }
+        }
+    }
+
+    private fun adoptOutsideChange(c: Content) {
+        saved = c
+        content = c
+        _state.update { it.copy(title = c.title) }
+        if (loadedIntoPage) {
+            loadedIntoPage = false
+            loadIntoPage()
+        }
+    }
+
+    /** What a flush of the page returned: nothing new, an edit, or an edit it could not turn into markdown. */
+    private sealed interface PageChange {
+        data object None : PageChange
+        data class Edited(val content: Content) : PageChange
+        data class Error(val message: String) : PageChange
+    }
+
+    private fun pageChange(result: JsonObject?): PageChange {
+        if (result == null) return PageChange.None
+        result["error"]?.jsonPrimitive?.contentOrNull?.let { return PageChange.Error(it) }
+        if (result["dirty"]?.jsonPrimitive?.booleanOrNull != true) return PageChange.None
+        val markdown = result["markdown"]?.jsonPrimitive?.contentOrNull ?: return PageChange.None
+        return PageChange.Edited(Content(result["title"]?.jsonPrimitive?.contentOrNull ?: "", markdown))
     }
 
     // ---- The page ---------------------------------------------------------------------------
@@ -348,12 +389,17 @@ class EditorViewModel(
 
     // ---- Saving -----------------------------------------------------------------------------
 
-    private fun onContent(c: Content) {
+    /** The page reported [c] (in a `changed` message or a flush): it is the newest content. */
+    private fun takeContent(c: Content) {
         content = c
         // The page turned the edits into markdown after all.
         pageError = null
         if (c.title.isNotBlank() || c.markdown.isNotBlank()) everHadContent = true
         _state.update { it.copy(title = c.title) }
+    }
+
+    private fun onContent(c: Content) {
+        takeContent(c)
         // Saves run in the app's scope: leaving the screen must not cancel one.
         container.appScope.launch { saveNow() }
     }
@@ -396,17 +442,10 @@ class EditorViewModel(
             return
         }
         p.flush { result ->
-            val error = result?.get("error")?.jsonPrimitive?.contentOrNull
-            if (error != null) pageError = error
-            if (result != null && result["dirty"]?.jsonPrimitive?.booleanOrNull == true) {
-                val markdown = result["markdown"]?.jsonPrimitive?.contentOrNull
-                if (markdown != null && error == null) {
-                    pageError = null
-                    val c = Content(result["title"]?.jsonPrimitive?.contentOrNull ?: "", markdown)
-                    content = c
-                    if (c.title.isNotBlank() || c.markdown.isNotBlank()) everHadContent = true
-                    _state.update { it.copy(title = c.title) }
-                }
+            when (val change = pageChange(result)) {
+                is PageChange.Error -> pageError = change.message
+                is PageChange.Edited -> takeContent(change.content)
+                PageChange.None -> {}
             }
             finish()
         }
@@ -582,12 +621,18 @@ class EditorViewModel(
     fun dismissLinkDialog() = _state.update { it.copy(linkDialog = null) }
 
     fun applyLink(text: String, href: String) {
+        // The dialog edits text and address; an existing link keeps its title ([text](url "title")).
+        val title = _state.value.linkDialog?.title
         _state.update { it.copy(linkDialog = null) }
         val url = href.trim().let { h ->
             // A bare domain gets https://, so the link opens.
             if (h.isNotEmpty() && !Urls.hasScheme(h) && !h.startsWith("/") && !h.startsWith("#") && h.contains('.')) "https://$h" else h
         }
-        command("setLink", buildJsonObject { put("text", text); put("href", url) })
+        command("setLink", buildJsonObject {
+            put("text", text)
+            put("href", url)
+            if (title != null) put("title", title)
+        })
     }
 
     fun removeLink() {

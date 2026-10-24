@@ -1,6 +1,7 @@
 package app.pitchstone.markdown
 
 import org.commonmark.ext.task.list.items.TaskListItemMarker
+import org.commonmark.node.ListItem
 import org.commonmark.node.Node
 import org.commonmark.renderer.NodeRenderer
 import org.commonmark.renderer.html.AttributeProvider
@@ -34,17 +35,24 @@ object Html {
             .softbreak("<br />\n")
             .escapeHtml(true)
             .sanitizeUrls(true)
-        if (email) {
-            builder.attributeProviderFactory {
-                AttributeProvider { _: Node, tagName: String, attributes: MutableMap<String, String> ->
-                    EMAIL_STYLES[tagName]?.let { style ->
-                        attributes["style"] = listOfNotNull(attributes["style"], style).joinToString(";")
-                    }
+        builder.attributeProviderFactory {
+            AttributeProvider { node: Node, tagName: String, attributes: MutableMap<String, String> ->
+                fun style(css: String) {
+                    attributes["style"] = listOfNotNull(attributes["style"], css).joinToString(";")
                 }
+                // A task item shows its ☐ or ☑ in place of a bullet.
+                if (tagName == "li" && isTask(node)) {
+                    if (email) style("list-style:none") else attributes["class"] = "task"
+                }
+                if (email) EMAIL_STYLES[tagName]?.let(::style)
             }
         }
         return builder.build()
     }
+
+    /** Whether [node] is a task list item (one holding a TaskListItemMarker). */
+    private fun isTask(node: Node): Boolean =
+        node is ListItem && (node.firstChild is TaskListItemMarker || node.firstChild?.firstChild is TaskListItemMarker)
 
     private val emailRenderer by lazy { renderer(email = true) }
     private val documentRenderer by lazy { renderer(email = false) }

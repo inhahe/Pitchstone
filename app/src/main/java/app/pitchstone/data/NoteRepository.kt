@@ -289,6 +289,8 @@ class NoteRepository(
         val oldTitle = note.linkedTitle
         val oldKey = WikiLinks.key(oldTitle)
         val newKey = WikiLinks.key(note.title)
+        // A title cleared for now: links keep the name they have until the note gets a new one.
+        if (newKey.isEmpty()) return 0
         var changed = 0
         val refs = dao.allRefs()
         val othersHaveOldName = refs.any { it.id != noteId && WikiLinks.key(it.title) == oldKey }
@@ -353,8 +355,16 @@ class NoteRepository(
         db.withTransaction { inChunks(ids) { dao.setTrashed(it, now) } }
     }
 
+    /** Takes notes out of the trash, into their folders as spelled now (see [existingSpelling]). */
     suspend fun restore(ids: Collection<Long>) {
-        db.withTransaction { inChunks(ids) { dao.setTrashed(it, null) } }
+        db.withTransaction {
+            // Still in the trash here, so their own folder does not count as existing.
+            for (note in notes(ids)) {
+                val folder = existingSpelling(note.folder)
+                if (folder != note.folder) dao.moveNotes(listOf(note.id), folder)
+            }
+            inChunks(ids) { dao.setTrashed(it, null) }
+        }
     }
 
     suspend fun deleteForever(ids: Collection<Long>) {

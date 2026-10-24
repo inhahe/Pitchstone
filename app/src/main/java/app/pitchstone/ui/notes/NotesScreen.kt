@@ -495,11 +495,22 @@ private fun NoteRow(
     }
 }
 
+/**
+ * [s] lower-cased one character at a time, keeping one whose lower case is longer (`İ`), so
+ * that positions in the result are positions in [s].
+ */
+internal fun foldCase(s: String): String = buildString(s.length) {
+    for (c in s) {
+        val lower = c.lowercase()
+        if (lower.length == 1) append(lower) else append(c)
+    }
+}
+
 /** [text] with every occurrence of the words of [query] in bold and [color]. */
 private fun highlighted(text: String, query: String, color: Color): AnnotatedString {
-    val words = query.lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    val words = foldCase(query).split(Regex("\\s+")).filter { it.isNotEmpty() }
     if (words.isEmpty()) return AnnotatedString(text)
-    val lower = text.lowercase()
+    val lower = foldCase(text)
     val marks = BooleanArray(text.length)
     for (w in words) {
         var i = lower.indexOf(w)

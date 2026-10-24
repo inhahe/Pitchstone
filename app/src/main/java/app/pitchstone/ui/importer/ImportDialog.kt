@@ -125,7 +125,7 @@ fun ImportDialog(currentFolder: String, folders: List<String>, onDismiss: () -> 
                     if (r.alreadyPresent > 0) Text("${r.alreadyPresent} were already here unchanged and were not imported again.")
                     if (p.unsupported > 0) Text("${p.unsupported} chosen ${if (p.unsupported == 1) "file is" else "files are"} not .md or .txt and ${if (p.unsupported == 1) "was" else "were"} skipped.")
                     if (r.skippedLarge.isNotEmpty()) {
-                        Text("Too large to import (over 8 MB):", fontWeight = FontWeight.Medium)
+                        Text("Too large to import (over ${Importer.MAX_BYTES / 1000} KB):", fontWeight = FontWeight.Medium)
                         r.skippedLarge.take(20).forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
                     }
                     if (r.failed.isNotEmpty()) {

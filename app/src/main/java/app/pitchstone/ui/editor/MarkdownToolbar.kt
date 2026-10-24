@@ -57,7 +57,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.ripple
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -123,7 +122,9 @@ private fun Modifier.toolClick(label: String, enabled: Boolean, active: Boolean,
         role = Role.Button
         selected = active
     }.clickable(
-        interactionSource = MutableInteractionSource(),
+        // null: clickable keeps its own source, stable across recompositions (a new one each
+        // time would cut a ripple short whenever the toolbar state changes).
+        interactionSource = null,
         indication = ripple(bounded = false, radius = 22.dp),
         enabled = enabled,
         onClick = onClick,
