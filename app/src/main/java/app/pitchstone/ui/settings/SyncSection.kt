@@ -100,7 +100,8 @@ fun SyncSection(folderUri: String?, excluded: Set<String>) {
     Text(
         "Keep the notes in step with a folder on this phone: an Obsidian vault, or a folder Syncthing or another app syncs. " +
             "Each note is a markdown file there, Folder/Title.md, and the files notes link to (pictures, PDFs, recordings) are there too. " +
-            "Changes on either side reach the other when Pitchstone opens or closes, and every 15 minutes or so.",
+            "Changes made in the folder arrive within seconds while Pitchstone is open (on the phone's storage or a memory card); " +
+            "otherwise when it opens or closes, and every 15 minutes or so.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(bottom = 8.dp),

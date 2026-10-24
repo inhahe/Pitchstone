@@ -90,10 +90,11 @@ class PitchstoneApp : Application() {
         super.onCreate()
         container = AppContainer(this)
         container.startMaintenance()
-        // Folder sync when the app comes to the front, and once it has left it.
+        // Folder sync when the app comes to the front (watching the folder while it stays there),
+        // and once it has left it.
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) = container.sync.requestSync()
-            override fun onStop(owner: LifecycleOwner) = container.sync.requestBackgroundSync()
+            override fun onStart(owner: LifecycleOwner) = container.sync.onFront()
+            override fun onStop(owner: LifecycleOwner) = container.sync.onBack()
         })
     }
 }

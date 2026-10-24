@@ -154,7 +154,9 @@ No more exporting and importing by hand.
   other side too, and left alone from then on; nothing is trashed for it. Taken back into sync,
   a folder's notes and files meet as at a first sync.
 - **When**: as Pitchstone comes to the front, a few seconds after it leaves it or a note is
-  closed, about every 15 minutes in the background, and when you tap Sync now.
+  closed, about every 15 minutes in the background, and when you tap Sync now. While
+  Pitchstone is open, changes another app makes in the folder (Syncthing, Obsidian) arrive
+  within seconds, if the folder is on the phone's storage or a memory card.
 - **Changes** on either side reach the other: edits, renames (a renamed file renames its note,
   and links to it are updated if Settings → Update links when renaming is on), and moves
   between folders. A note open in Pitchstone is not changed by a sync until you close it; its

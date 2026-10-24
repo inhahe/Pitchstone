@@ -63,9 +63,12 @@
 
 ### Folder sync
 
-- **Not instant**: changes made in the folder arrive when Pitchstone comes to the front, or
-  within about 15 minutes in the background, when Android lets background work run (battery
-  saver and Doze can postpone it). Sync now in Settings does it at once.
+- **Not instant in the background**: while Pitchstone is open, changes made in a folder on
+  the phone's storage or a memory card arrive within seconds. A folder of another provider (a
+  cloud app's), and any folder while Pitchstone is in the background, syncs when Pitchstone
+  comes to the front, or within about 15 minutes, when Android lets background work run
+  (battery saver and Doze can postpone it). Sync now in Settings does it at once. Only the
+  first 300 folders are watched.
 - **A note's title is its file name.** Characters files cannot hold (`/ \ : * ? " < > |`)
   become spaces in the name ("Client/Server" is `Client Server.md`, which Obsidian's
   `[[Client/Server]]` would not find), and a note made from a file takes the file's name.

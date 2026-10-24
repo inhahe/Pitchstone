@@ -76,6 +76,10 @@ class SyncManager(
 
     private val requests = Channel<Unit>(Channel.CONFLATED)
 
+    /** Changes other apps make in the folder, while the app is in front ([onFront]). */
+    private val watcher = FolderWatcher(context.contentResolver) { requestSync() }
+    @Volatile private var inFront = false
+
     init {
         scope.launch {
             for (request in requests) {
@@ -105,6 +109,28 @@ class SyncManager(
     /** Syncs soon, in this process (the app is in use). */
     fun requestSync() {
         requests.trySend(Unit)
+    }
+
+    /** The app came to the front: sync, and watch the folder for changes while it stays there. */
+    fun onFront() {
+        inFront = true
+        requestSync()
+        scope.launch { watch() }
+    }
+
+    /** The app left the front: stop watching, and sync once more in the background. */
+    fun onBack() {
+        inFront = false
+        watcher.stop()
+        requestBackgroundSync()
+    }
+
+    /** Watches the folder set (its folders as they are now), if the app is in front. */
+    private suspend fun watch() {
+        val s = runCatching { settings.current() }.getOrNull() ?: return
+        val uri = s.syncFolderUri
+        if (!inFront || uri == null) return
+        watcher.watch(Uri.parse(uri), s.syncExcluded)
     }
 
     /**
@@ -180,6 +206,7 @@ class SyncManager(
 
     /** Stops syncing. The notes and the files stay as they are. */
     suspend fun stop() {
+        watcher.stop()
         WorkManager.getInstance(context).cancelUniqueWork(WORK_PERIODIC)
         WorkManager.getInstance(context).cancelUniqueWork(WORK_SOON)
         lock.withLock {
@@ -224,6 +251,8 @@ class SyncManager(
             }.apply()
             _status.value = SyncStatus(last = report, lastChange = lastChange)
             announce(report, before)
+            // Folders may have come or gone.
+            watch()
             report
         } catch (e: Exception) {
             if (e is CancellationException) throw e

@@ -26,7 +26,7 @@ app/                     The Android app (package app.pitchstone)
   export/                FileNames, ExportPlanner, ExportWriter, DocumentTree (SAF), Importer
   sync/                  Folder sync: SyncEntries (table, hash), Vault (the folder listed),
                          SyncPlanner (pure), FolderSync (notes), AttachmentSync,
-                         SyncManager (triggers, status, SyncWorker)
+                         SyncManager (triggers, status, SyncWorker), FolderWatcher
   share/                 Sharing: email/text/file intents
   ui/                    Compose screens: notes (list, drawer), editor (screen, WebView,
                          toolbar, dialogs, view model), export, importer, share, settings,
@@ -381,7 +381,14 @@ attachment.
 
 **Running** (`SyncManager`, in `AppContainer`): one sync at a time (a mutex). In process: a
 conflated request channel with a 1.5 s debounce, fed when the process comes to the front
-(`ProcessLifecycleOwner`) and when an editor session ends. Through WorkManager (`SyncWorker`):
+(`ProcessLifecycleOwner`: `onFront`), when an editor session ends, and by `FolderWatcher`
+while the app is in front. Android's storage provider (phone storage, memory cards) watches a
+folder for as long as a listing of it is open, and announces each change at that folder's
+children URI; so the watcher keeps a listing of every folder synced open (at most 300, not
+hidden, not left out: listed again after each sync, the new listings opened before the old
+close) and listens to the provider's authority, keeping the announcements for folders under
+the synced one, and calls once they have been quiet for 2 s. A provider that announces nothing
+leaves the other triggers. Watching stops when the app leaves the front (`onBack`). Through WorkManager (`SyncWorker`):
 a periodic job every 15 minutes (battery not low) while a folder is set, and a one-off job 3
 s after the app leaves the front, which keeps the process alive for it (appended after one
 running, which replacing would cancel). The last report, the last one that changed something,
