@@ -10,7 +10,8 @@ if not exist "%ADB%" set "ADB=adb"
 cd /d "%~dp0"
 
 echo Building the release version...
-call gradlew.bat assembleRelease
+rem By its full path: cmd may be set not to look in the current folder.
+call "%~dp0gradlew.bat" assembleRelease
 if errorlevel 1 (
     echo.
     echo The build failed; nothing was installed.
