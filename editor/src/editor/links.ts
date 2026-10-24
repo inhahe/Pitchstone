@@ -17,10 +17,14 @@ export function linkKey(name: string): string {
   return linkName(name).toLowerCase()
 }
 
-/** The note a wikilink target points at: the part before any `#heading` or `#^block`. */
+/**
+ * The note a wikilink target names: the part before any `#heading` or `#^block`, trimmed, and
+ * without a `.md` suffix (as the app's WikiLinks.noteName).
+ */
 export function wikilinkNote(target: string): string {
   const hash = target.indexOf('#')
-  return (hash >= 0 ? target.slice(0, hash) : target).trim()
+  const name = (hash >= 0 ? target.slice(0, hash) : target).trim()
+  return name.toLowerCase().endsWith('.md') ? name.slice(0, -3) : name
 }
 
 /**
@@ -66,9 +70,8 @@ export function anchorPosition(doc: Node, anchor: string): number | null {
  * `folder/note`. A target without a note part (`#Heading`) points into the note itself.
  */
 export function noteExists(keys: ReadonlySet<string>, target: string): boolean {
-  let name = wikilinkNote(target)
+  const name = wikilinkNote(target)
   if (!name) return true
-  if (/\.md$/i.test(name)) name = name.slice(0, -3)
   if (keys.has(linkKey(name))) return true
   const slash = name.lastIndexOf('/')
   if (slash < 0) return false

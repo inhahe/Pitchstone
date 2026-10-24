@@ -1,5 +1,6 @@
 import {expect, type Page} from '@playwright/test'
 import {pathToFileURL} from 'node:url'
+import {existsSync} from 'node:fs'
 import {join} from 'node:path'
 import {linkKey} from '../src/editor/links'
 
@@ -45,7 +46,10 @@ export async function open(
   opts: {shortcuts?: boolean; titles?: string[]; mode?: string; url?: string} = {},
 ) {
   await page.addInitScript(asChrome90)
-  await page.route(`${ORIGIN}/**`, (route) => route.fulfill({path: join(DIST, new URL(route.request().url()).pathname)}))
+  await page.route(`${ORIGIN}/**`, (route) => {
+    const file = join(DIST, new URL(route.request().url()).pathname)
+    return existsSync(file) ? route.fulfill({path: file}) : route.fulfill({status: 404})
+  })
   await page.goto(opts.url ?? PAGE)
   await page.evaluate(
     ([markdown, shortcuts, titles, keys, mode]) => {

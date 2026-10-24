@@ -198,6 +198,13 @@ test.describe('toolbar commands', () => {
     expect(await markdown(page)).toBe('```\na [[X]]\n```\n\n- ```\n  b [[Y]]\n  ```\n')
   })
 
+  test('code blocks made across a table leave the links in its cells alone', async ({page}) => {
+    await open(page, 'a [[X]]\n\n| [[Plan]] | ![i](x.png) |\n| --- | --- |\n| c | d |\n')
+    await page.keyboard.press('Control+a')
+    await command(page, 'codeBlock')
+    expect(await markdown(page)).toBe('```\na [[X]]\n```\n\n| [[Plan]] | ![i](x.png) |\n| --- | --- |\n| c | d |\n')
+  })
+
   test('find marks the right text after characters whose lower case is longer', async ({page}) => {
     await open(page, 'İİ ab Ab\n')
     await page.evaluate(() => window.pitchstone.find('ab'))
@@ -304,6 +311,23 @@ test.describe('saving', () => {
     await expect.poll(async () => (await changed()).at(-1)).toContain('[[After]]')
     // Nothing older than the flushed version came after it.
     for (const md of (await changed()).slice(before)) expect(md).toContain('[[Newest]]')
+  })
+
+  test('a slow worker still saves while typing goes on in bursts', async ({page}) => {
+    await open(page, 'start\n')
+    // As if the worker took 1.2 s per note: each request reaches it that much later.
+    await page.evaluate(() => {
+      const post = Worker.prototype.postMessage
+      Worker.prototype.postMessage = function (this: Worker, ...args: Parameters<Worker['postMessage']>) {
+        setTimeout(() => post.apply(this, args), 1200)
+      } as Worker['postMessage']
+    })
+    // Pauses just over the autosave delay, for 4 s.
+    for (let i = 0; i < 8; i++) {
+      await page.keyboard.type('x')
+      await page.waitForTimeout(500)
+    }
+    expect((await messages(page)).filter((m) => m.type === 'changed').length).toBeGreaterThanOrEqual(2)
   })
 
   test('edits made while the worker runs stay pending, and are reported after', async ({page}) => {

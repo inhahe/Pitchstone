@@ -109,9 +109,11 @@ export class PitchstoneEditor {
   private reportedGen = 0
   /** Serializes for autosave off the main thread; null where a worker cannot run. */
   private worker: Worker | null = null
-  /** The background serialization in progress. */
+  /** The background serialization in progress (one at a time). */
   private job: {id: number; gen: number; title: string} | null = null
   private jobIds = 0
+  /** Whether an autosave came due while the worker was busy: it runs when the worker answers. */
+  private jobAgain = false
 
   constructor(root: HTMLElement) {
     this.worker = this.startWorker()
@@ -295,6 +297,12 @@ export class PitchstoneEditor {
     }
     if (!this.dirty) return
     if (!now && this.worker && this.mode !== 'source') {
+      // One job at a time: a note the worker takes longer over than a pause in typing would
+      // otherwise have every answer overtaken by a newer request, and nothing reported.
+      if (this.job) {
+        this.jobAgain = true
+        return
+      }
       const id = ++this.jobIds
       this.job = {id, gen: this.editGen, title: this.title.value}
       const request: SerializeRequest = {id, doc: this.view.state.doc.toJSON()}
@@ -307,24 +315,29 @@ export class PitchstoneEditor {
   /**
    * A background serialization finished. It is reported unless something as new was reported
    * already (by a flush meanwhile): an older version must never reach the app after a newer
-   * one. Edits made since leave the change pending; their own autosave follows.
+   * one. Edits made since stay pending; if their autosave came due meanwhile, it runs now.
    */
   private onSerialized(r: SerializeResponse) {
     const job = this.job
+    // An answer to a job from before load() (the worker still finished it) is no one's.
     if (!job || r.id !== job.id) return
     this.job = null
-    if (!this.dirty || job.gen <= this.reportedGen) return
-    if ('error' in r) {
-      // Again here, where a failure is reported the usual way.
-      this.emitChangeNow()
-      return
+    const again = this.jobAgain
+    this.jobAgain = false
+    if (this.dirty && job.gen > this.reportedGen) {
+      if ('error' in r) {
+        // Again here, where a failure is reported the usual way.
+        this.emitChangeNow()
+        return
+      }
+      this.noteExactness(r.exact)
+      this.reportedGen = job.gen
+      if (job.gen === this.editGen) this.dirty = false
+      this.failing = false
+      this.seq++
+      post({type: 'changed', markdown: r.markdown, title: job.title, exact: r.exact, seq: this.seq})
     }
-    this.noteExactness(r.exact)
-    this.reportedGen = job.gen
-    if (job.gen === this.editGen) this.dirty = false
-    this.failing = false
-    this.seq++
-    post({type: 'changed', markdown: r.markdown, title: job.title, exact: r.exact, seq: this.seq})
+    if (again) this.emitChange()
   }
 
   /** Starts the autosave worker; null if the page cannot run one (a file:// page, say). */
@@ -369,6 +382,7 @@ export class PitchstoneEditor {
     this.editGen++
     this.reportedGen = this.editGen
     this.job = null
+    this.jobAgain = false
     this.warnedInexact = false
     this.failing = false
     this.placeholder = false

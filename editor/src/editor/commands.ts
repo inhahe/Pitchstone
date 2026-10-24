@@ -148,13 +148,15 @@ const isMarkdownAtom = (node: Node) => node.isInline && node.isAtom && !node.isT
 
 /**
  * Replaces the inline atoms (links to notes, images, footnote references, inline HTML) of the
- * textblocks touching `from`..`to` with their markdown, as text: a code block holds only text,
- * and the atoms would otherwise vanish.
+ * textblocks touching `from`..`to` that are about to become code blocks with their markdown,
+ * as text: a code block holds only text, and the atoms would otherwise vanish. Textblocks
+ * that cannot become one (table cells) keep theirs, as setBlockType leaves them be.
  */
 function atomsToText(tr: Transaction, from: number, to: number): void {
   const atoms: {pos: number; node: Node}[] = []
-  tr.doc.nodesBetween(from, to, (node, pos) => {
+  tr.doc.nodesBetween(from, to, (node, pos, parent, index) => {
     if (!node.isTextblock) return true
+    if (!parent || !parent.canReplaceWith(index, index + 1, nodes.code_block)) return false
     node.forEach((child, offset) => {
       if (isMarkdownAtom(child)) atoms.push({pos: pos + 1 + offset, node: child})
     })
