@@ -121,9 +121,13 @@ once per failing streak, `inexact`).
 (`src/worker.ts`, bundled as `editor-worker.js`): the page sends `doc.toJSON()` and posts the
 answer as `changed`, so typing never waits for a long note's serialization (a 72 KB note: about
 65 ms in the worker, about 5 ms left on the page, against 20-40 ms on the page before, on the
-emulator). Every edit counts up `editGen`; a worker answer is reported only if no flush has
-already reported that edit count or a later one (`reportedGen`), so an older version never
-reaches the app after a newer one, and edits made meanwhile stay pending. `flush()` and the
+emulator). The worker has one job at a time: an autosave that comes due while it works runs
+when it answers, so a slow worker still saves during bursts of typing. It builds each document
+with `DocInterner`, which gives unchanged textblocks their node from the previous request, so
+the serializer's per-node cache works there as on the page. Every edit counts up `editGen`; a
+worker answer is reported only if no flush has already reported that edit count or a later one
+(`reportedGen`), so an older version never reaches the app after a newer one, and edits made
+meanwhile stay pending. `flush()` and the
 page-hidden save serialize synchronously on the page, as does everything where no worker can
 run (a `file://` page) or the worker fails. The e2e tests serve the page from a routed http
 origin so that the worker runs.
@@ -137,19 +141,25 @@ pending change synchronously, saves, then continues. The view model also observe
 the database: a change that is none of `saved`/`inFlight`/`content` came from elsewhere
 (restored version, link rename) and is reloaded into the page.
 
-Leaving a note (`close`) requires everything to be saved: if the save failed or the page could
-not produce markdown, the note stays open with a dialog (try again, leave anyway, stay and copy
-the text). Every session ends once in `finishSession`, from `close` or from `onCleared` when
-the screen is removed some other way (a tag tapped further up the stack): an empty note is
+Every way out of a note is an `Exit` (back, a tapped `#tag`, a followed `[[link]]`) taken only
+once everything is saved: if the save failed or the page could not produce markdown, the note
+stays open with a dialog (try again, leave anyway, stay and copy the text), which then takes
+the same exit. A tag closes every editor, and an editor left along a link may be closed that
+way later, so none may be left with unsaved text. Every session ends once in `finishSession`,
+from Back or from `onCleared` when the screen is removed some other way: an empty note is
 deleted only if it never held text in this session and was never written
-(`NoteRepository.isPristine`), and otherwise goes to the trash with Undo.
+(`NoteRepository.isPristine`), and otherwise goes to the trash with Undo. Its failures (and
+those of the start-up chores) are logged and reported, never thrown: an exception in the app
+scope would crash the app, at start-up at every start.
 
 Renames: each note records `linkedTitle`, the title its incoming links were last updated for.
-`finishSession` calls `NoteRepository.applyRename`, which rewrites every note linking to the
-old title (each with a compare-and-set save, retried, so a racing editor save is never
-overwritten) and then records the new title; renames left pending (the process died) are
-completed at start-up (`applyPendingRenames`). Links are left alone when the setting is off or
-another note still has the old name.
+`finishSession` calls `NoteRepository.applyRename`, which rewrites the links that led to the
+note before the rename (`LinkResolver` over the notes as they were: `[[Client/Server]]` may
+lead to a note titled "Client/Server", not to the renamed "Server"), each linking note with a
+compare-and-set save of title and body, retried, so a racing editor save is never overwritten,
+and then records the new title; renames left pending (the process died) are completed at
+start-up (`applyPendingRenames`, one failure skipped and left pending). Links are left alone
+when the setting is off or another note still has the old name.
 
 The WebView is recreated if its renderer dies (`onRenderProcessGone`); the activity handles
 configuration changes itself, so rotation or theme changes keep the WebView and its undo
@@ -160,7 +170,10 @@ history.
 Room database `pitchstone.db` (WAL), schema exported to `app/schemas`:
 
 - `notes`: id, title, body (markdown), folder path, created/updated, pinned, trashedAt,
-  `searchText` (lower-cased title + plain text), `snippet`.
+  `searchText` (lower-cased title + plain text, at most 600 KB), `snippet`. A note holds at
+  most 1 MB (`MAX_NOTE_BYTES`, checked by create, import and save, which throw
+  `NoteTooLargeException`): Android reads a row through a 2 MB window, and a larger row could
+  be written but never read back.
 - `folders`: explicit folder paths (so empty folders exist). The folder list is these plus
   every folder holding a note, with ancestors.
 - `note_tags` (key, display) and `note_links` (target key): the derived index, rewritten on
@@ -174,21 +187,26 @@ Room database `pitchstone.db` (WAL), schema exported to `app/schemas`:
 
 Folder trees are matched in SQL by `folder = :old OR substr(folder, 1, length(:old) + 1) =
 :old || '/'`: case-sensitive (unlike `LIKE`) and counted in SQLite's own characters (a Kotlin
-length counts UTF-16 units). Bulk actions on note ids run in chunks of 500, since SQLite before
-3.32 (Android 8 to 11) allows 999 variables per statement.
+length counts UTF-16 units). New folder paths (create, import, move, a link to a missing note)
+take the spelling of an existing folder that matches ignoring case (`existingSpelling`), since
+two such folders would be one on most phone storage and in every export. Bulk actions on note
+ids run in chunks of 500, since SQLite before 3.32 (Android 8 to 11) allows 999 variables per
+statement.
 
 Search is substring AND over words on `searchText` (LIKE with escaped wildcards). Notes in the
 trash for 30 days are purged at start-up.
 
-Wikilinks resolve by `WikiLinks.key` (title without `[]|#^`, spaces collapsed, lower-cased),
-`.md` ignored: first a note whose whole title matches (titles may contain `/`), then a
+Wikilinks resolve (`LinkResolver`) by the link's note name (`WikiLinks.noteName`: before any
+`#`, trimmed, `.md` dropped) and `WikiLinks.key` (without `[]|#^`, spaces collapsed,
+lower-cased): first a note whose whole title matches (titles may contain `/`), then a
 `folder/note` path (`WikiLinks.pathKey`) among each note's `lookupKeys` (title, and
 `tail-of-folder/title` for every tail of its folder path, `/title` at the top level). Among
 several: same folder, then top level, then most recently edited. A link is indexed
 (`note_links`) under its whole name and the part after each `/`, so backlinks and renames find
-it whichever note it means. Following a link to a missing note creates it (`folder/note` in
-that folder, as Obsidian does); links to files other than `.md` are refused. The editor's
-missing-link marks use the same keys (`editor/src/editor/links.ts`).
+every link that may mean a note; `backlinks` then keeps those that resolve to it. Following a
+link to a missing note creates it (`folder/note` in that folder, as Obsidian does); links to
+attachments (`WikiLinks.isAttachment`: images, audio, video, PDF, office files, canvases) are
+refused. The editor's missing-link marks use the same rules (`editor/src/editor/links.ts`).
 
 Settings live in DataStore (`Settings.kt`).
 
@@ -227,7 +245,9 @@ append an extension.
 `Importer` walks a tree (skipping hidden folders) or picked files, reads UTF-8 with or without
 BOM, converts plain text to markdown that displays it literally (`plainTextToMarkdown`), and
 skips notes already present unchanged. A file shared or opened from another app is read only
-from a `content://` URI and only up to `Importer.MAX_BYTES`.
+from a `content://` URI. Files are read up to `Importer.MAX_BYTES` (a note's limit), counted
+as they are read since a provider's reported size can be missing; a larger file is skipped
+(folder import) or refused with a message (shared or opened file).
 
 ## Sharing
 

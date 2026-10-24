@@ -98,7 +98,6 @@ fun EditorScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val titles by vm.noteTitles.collectAsStateWithLifecycle()
-    val folders by container.repository.folders().collectAsStateWithLifecycle(initialValue = emptyList())
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -138,7 +137,7 @@ fun EditorScreen(
     }
 
     BackHandler {
-        if (state.findOpen) vm.closeFind() else vm.close(onBack)
+        if (state.findOpen) vm.closeFind() else vm.close()
     }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.onStop() }
 
@@ -161,7 +160,7 @@ fun EditorScreen(
                 TopAppBar(
                     title = {},
                     navigationIcon = {
-                        IconButton(onClick = { vm.close(onBack) }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                        IconButton(onClick = vm::close) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                     },
                     actions = {
                         if (state.saveError != null) {
@@ -287,6 +286,8 @@ fun EditorScreen(
     }
     export?.let { source -> ExportDialog(source) { export = null } }
     if (moving) {
+        // Collected only while the dialog shows: the folder list re-runs on every save.
+        val folders by remember { container.repository.folders() }.collectAsStateWithLifecycle(initialValue = emptyList())
         FolderPickerDialog("Move to folder", folders, state.folder, onDismiss = { moving = false }) { folder ->
             moving = false
             vm.move(folder)
@@ -311,14 +312,11 @@ fun EditorScreen(
             title = { Text("Not saved") },
             text = { Text("$why\n\nStay to copy your text somewhere safe, try again, or leave and lose the unsaved changes.") },
             confirmButton = {
-                TextButton(onClick = {
-                    vm.dismissLeaveBlocked()
-                    vm.close(onBack)
-                }) { Text("Try again") }
+                TextButton(onClick = vm::retryLeave) { Text("Try again") }
             },
             dismissButton = {
                 Row {
-                    TextButton(onClick = { vm.leaveAnyway(onBack) }) { Text("Leave anyway", color = MaterialTheme.colorScheme.error) }
+                    TextButton(onClick = vm::leaveAnyway) { Text("Leave anyway", color = MaterialTheme.colorScheme.error) }
                     TextButton(onClick = vm::dismissLeaveBlocked) { Text("Stay") }
                 }
             },

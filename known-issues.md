@@ -35,6 +35,10 @@
 
 ## Behaviour to know
 
+- **A note holds at most 1 MB of text** (about 500 pages). A longer note cannot be saved (the
+  editor says so and keeps it open), and a longer file is not imported. Search looks at the
+  first 600 KB of a note's text.
+
 - Email formatting depends on the mail app: Gmail shows bold, italic, links and lists from
   the formatted body; some apps show only the plain text. Attach the `.html` file for a
   faithful copy.
@@ -43,7 +47,7 @@
 - A link containing `/` may mean a title with a slash or a note in a folder: `[[Work/Plan]]`
   finds a note titled "Work/Plan" first, then a note "Plan" in a folder Work. Tapping such a
   link to a missing note creates "Plan" in the folder Work, as Obsidian does.
-- Folders whose names differ only in case ("Work" and "work") are separate folders in the app,
-  but are written to one folder when exported, as on most phone storage. The app does not let
-  you create such a pair.
+- Folders whose names differ only in case ("Work" and "work") would be one folder on most
+  phone storage and in exports, so a new folder takes the spelling of an existing one ("work/Plans"
+  goes into "Work"). Renaming a folder keeps the spelling you give it.
 - Gboard's own autocorrect and capitalisation apply in the editor as in any text field.

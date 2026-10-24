@@ -69,6 +69,21 @@ class WikiLinksTest {
     }
 
     @Test
+    fun `a link's note name drops the heading, spaces and md`() {
+        assertThat(WikiLinks.noteName(" Plan.MD#Goals ")).isEqualTo("Plan")
+        assertThat(WikiLinks.noteName("#Goals")).isEmpty()
+    }
+
+    @Test
+    fun `attachments are told from notes by their file type`() {
+        assertThat(WikiLinks.isAttachment("pic.PNG")).isTrue()
+        assertThat(WikiLinks.isAttachment("docs/manual.pdf")).isTrue()
+        for (name in listOf("Node.js", "v1.2", "Chapter 3.1", "Mr. Li", "Vol. 2", "2.0/Q1", "Plan")) {
+            assertThat(WikiLinks.isAttachment(name)).isFalse()
+        }
+    }
+
+    @Test
     fun `typed link targets keep their heading part`() {
         assertThat(WikiLinks.cleanTarget(" Plan#Goals ")).isEqualTo("Plan#Goals")
         assertThat(WikiLinks.cleanTarget("a[b]|c\nd")).isEqualTo("abcd")
@@ -110,6 +125,17 @@ class LinkRewriterTest {
 }
 
 class NoteIndexerTest {
+    @Test
+    fun `search text is cut to its byte budget between characters`() {
+        assertThat(NoteIndexer.capUtf8("abc", 10)).isEqualTo("abc")
+        // "日" is 3 bytes and the emoji 4 (two UTF-16 units): neither is split.
+        assertThat(NoteIndexer.capUtf8("日日日日", 10)).isEqualTo("日日日")
+        assertThat(NoteIndexer.capUtf8("a😀b", 4)).isEqualTo("a")
+        assertThat(NoteIndexer.capUtf8("a😀b", 5)).isEqualTo("a😀")
+        val big = NoteIndexer.index("T", "word ".repeat(200_000))
+        assertThat(big.searchText.toByteArray(Charsets.UTF_8).size).isAtMost(NoteIndexer.SEARCH_TEXT_MAX_BYTES)
+    }
+
     @Test
     fun `collects tags from text and front matter, not from code`() {
         val body = "---\ntags: [project, \"two words\"]\n---\nA #idea and #nested/tag but not `#code` or # heading or #123.\n\n```\n#fenced\n```"
@@ -203,6 +229,19 @@ class HtmlTest {
 }
 
 class PlainTextImportTest {
+    @Test
+    fun `reading stops at the import limit, whatever size the file claims`() {
+        val atLimit = ByteArray(Importer.MAX_BYTES.toInt()) { 'a'.code.toByte() }
+        assertThat(Importer.readText(atLimit.inputStream()).length).isEqualTo(atLimit.size)
+        val over = ByteArray(Importer.MAX_BYTES.toInt() + 1) { 'a'.code.toByte() }
+        try {
+            Importer.readText(over.inputStream())
+            throw AssertionError("expected NoteTooLargeException")
+        } catch (e: app.pitchstone.data.NoteTooLargeException) {
+            assertThat(e.bytes).isGreaterThan(Importer.MAX_BYTES.toInt())
+        }
+    }
+
     private val samples = listOf(
         "# not a heading",
         "- not a list\n1. nor this\n> nor a quote",

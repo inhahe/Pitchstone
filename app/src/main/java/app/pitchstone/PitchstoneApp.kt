@@ -2,6 +2,7 @@ package app.pitchstone
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import app.pitchstone.data.AppDatabase
 import app.pitchstone.data.NoteRepository
 import app.pitchstone.data.SettingsRepository
@@ -35,12 +36,21 @@ class AppContainer(context: Context) {
     /** A scope for the note list to switch to (e.g. tapping a #tag in a note). */
     val listRequests = MutableStateFlow<ListRequest?>(null)
 
+    /**
+     * Start-up chores. A failure is logged and left for the next start: an exception here would
+     * crash the app, at every start, before anything could be done about it.
+     */
     fun startMaintenance() {
         appScope.launch {
-            repository.purgeOldTrash()
+            runCatching { repository.purgeOldTrash() }.onFailure { Log.w(TAG, "Emptying old trash failed", it) }
             // Renames the app was stopped in the middle of (see NoteEntity.linkedTitle).
-            repository.applyPendingRenames(settings.current().updateLinksOnRename)
+            runCatching { repository.applyPendingRenames(settings.current().updateLinksOnRename) }
+                .onFailure { Log.w(TAG, "Completing renames failed", it) }
         }
+    }
+
+    private companion object {
+        const val TAG = "Pitchstone"
     }
 }
 

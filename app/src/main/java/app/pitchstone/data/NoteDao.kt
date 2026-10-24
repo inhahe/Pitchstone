@@ -98,6 +98,9 @@ interface NoteDao {
     @Query("SELECT * FROM folders")
     suspend fun folders(): List<FolderEntity>
 
+    @Query("SELECT DISTINCT folder FROM notes")
+    suspend fun noteFolders(): List<String>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertFolder(folder: FolderEntity)
 

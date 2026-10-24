@@ -1,5 +1,6 @@
 package app.pitchstone.ui.editor
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.pitchstone.AppContainer
@@ -95,6 +96,8 @@ data class EditorUiState(
     /** Why the note could not be closed (its latest changes are not saved). */
     val leaveBlocked: String? = null,
 )
+
+private const val TAG = "Pitchstone"
 
 sealed interface EditorEvent {
     data class OpenUrl(val url: String) : EditorEvent
@@ -298,7 +301,7 @@ class EditorViewModel(
             "modeChanged" -> _state.update { it.copy(mode = EditorMode.from(str("mode"))) }
             "openLink" -> str("href")?.let { href -> flushThen { _events.send(EditorEvent.OpenUrl(href)) } }
             "openNote" -> str("target")?.let { openWikilink(it) }
-            "openTag" -> str("tag")?.let { tag -> flushThen { _events.send(EditorEvent.ShowTag(tag)) } }
+            "openTag" -> str("tag")?.let { leave(Exit.Tag(it)) }
             "editLink" -> _state.update {
                 it.copy(
                     linkDialog = LinkDialogState(
@@ -347,6 +350,8 @@ class EditorViewModel(
 
     private fun onContent(c: Content) {
         content = c
+        // The page turned the edits into markdown after all.
+        pageError = null
         if (c.title.isNotBlank() || c.markdown.isNotBlank()) everHadContent = true
         _state.update { it.copy(title = c.title) }
         // Saves run in the app's scope: leaving the screen must not cancel one.
@@ -413,53 +418,96 @@ class EditorViewModel(
     /** The app goes to the background: save. */
     fun onStop() = flushThen {}
 
+    /** Where the user goes from this note (see [leave]). */
+    private sealed interface Exit {
+        /** Back where they came from: the editing session ends. */
+        data object Back : Exit
+        /** To the notes with [tag]: every editor is closed, this one included. */
+        data class Tag(val tag: String) : Exit
+        /** Along a [[link]] to another note, opened over this one. */
+        data class Link(val target: String) : Exit
+    }
+
+    /** The exit the "Not saved" dialog holds back, for Try again and Leave anyway. */
+    private var blockedExit: Exit? = null
+
+    /** Back from the note: [leave] by [Exit.Back]. */
+    fun close() = leave(Exit.Back)
+
     /**
-     * Leaving the note: save, then finish the session (see [finishSession]) and [onClosed].
-     * If the note cannot be saved, it stays open and [EditorUiState.leaveBlocked] says why,
-     * so nothing typed is thrown away without asking.
+     * Takes [exit] once everything is saved. If something is not, the note stays open and
+     * [EditorUiState.leaveBlocked] says why, so nothing typed is thrown away without asking:
+     * every exit can end with this editor removed (a tag closes them all, and an editor left
+     * along a link may be closed that way later), and then its unsaved text would be lost.
      */
-    fun close(onClosed: () -> Unit) = flushThen { ok ->
-        if (!ok) {
+    private fun leave(exit: Exit) = flushThen { ok ->
+        if (ok) {
+            go(exit)
+        } else {
+            blockedExit = exit
             val why = pageError?.let { "The editor could not convert your latest changes to markdown ($it)." }
                 ?: "Your latest changes could not be saved: ${_state.value.saveError ?: "unknown error"}."
             _state.update { it.copy(leaveBlocked = why) }
-            return@flushThen
         }
-        finishSession()
-        onClosed()
     }
 
-    /** Leaves even though the latest changes are not saved (the user chose to). */
-    fun leaveAnyway(onClosed: () -> Unit) {
+    private suspend fun go(exit: Exit) {
+        when (exit) {
+            Exit.Back -> {
+                finishSession()
+                _events.send(EditorEvent.Close)
+            }
+            is Exit.Tag -> _events.send(EditorEvent.ShowTag(exit.tag))
+            is Exit.Link -> followLink(exit.target)
+        }
+    }
+
+    /** "Try again" in the "Not saved" dialog. */
+    fun retryLeave() {
+        val exit = blockedExit ?: return
+        dismissLeaveBlocked()
+        leave(exit)
+    }
+
+    /** "Leave anyway": takes the held-back exit although the latest changes are not saved. */
+    fun leaveAnyway() {
+        val exit = blockedExit ?: Exit.Back
+        dismissLeaveBlocked()
+        container.appScope.launch { withContext(Dispatchers.Main) { go(exit) } }
+    }
+
+    fun dismissLeaveBlocked() {
+        blockedExit = null
         _state.update { it.copy(leaveBlocked = null) }
-        container.appScope.launch {
-            finishSession()
-            withContext(Dispatchers.Main) { onClosed() }
-        }
     }
-
-    fun dismissLeaveBlocked() = _state.update { it.copy(leaveBlocked = null) }
 
     /**
      * The end of an editing session, once (when the note is closed, or its screen is removed
      * some other way). An empty note that never held anything is discarded; one that was
      * emptied goes to the trash (its text is in the version history). A renamed note gets the
-     * links to it updated.
+     * links to it updated. A failure here (the database, say) is reported, never thrown: the
+     * note is saved by now, and a rename left undone is completed at the next start.
      */
     private suspend fun finishSession() {
         if (!finished.compareAndSet(false, true)) return
         val c = content ?: return
-        if (c.title.isBlank() && c.markdown.isBlank()) {
-            if (!everHadContent && repo.isPristine(noteId)) {
-                repo.deleteForever(listOf(noteId))
-            } else if (repo.note(noteId)?.trashedAt == null) {
-                repo.moveToTrash(listOf(noteId))
-                container.listMessages.trySend(ListMessage("Empty note moved to trash", "Undo") { repo.restore(listOf(noteId)) })
+        try {
+            if (c.title.isBlank() && c.markdown.isBlank()) {
+                if (!everHadContent && repo.isPristine(noteId)) {
+                    repo.deleteForever(listOf(noteId))
+                } else if (repo.note(noteId)?.trashedAt == null) {
+                    repo.moveToTrash(listOf(noteId))
+                    container.listMessages.trySend(ListMessage("Empty note moved to trash", "Undo") { repo.restore(listOf(noteId)) })
+                }
+                return
             }
-            return
+            val changed = repo.applyRename(noteId, settings.value.updateLinksOnRename)
+            if (changed > 0) container.listMessages.trySend(ListMessage("Updated links in $changed ${if (changed == 1) "note" else "notes"}"))
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "Finishing the session of note $noteId failed", e)
+            container.listMessages.trySend(ListMessage("Could not finish with the note: ${e.message ?: e.javaClass.simpleName}"))
         }
-        val changed = repo.applyRename(noteId, settings.value.updateLinksOnRename)
-        if (changed > 0) container.listMessages.trySend(ListMessage("Updated links in $changed ${if (changed == 1) "note" else "notes"}"))
     }
 
     override fun onCleared() {
@@ -475,32 +523,33 @@ class EditorViewModel(
      * folder, as Obsidian does), and to its `#heading` or `#^block` if it has one.
      */
     private fun openWikilink(target: String) {
-        val anchor = target.substringAfter('#', "").trim().ifEmpty { null }
-        val name = target.substringBefore('#').trim()
-        if (name.isEmpty()) {
+        if (WikiLinks.noteName(target).isEmpty()) {
             // [[#Heading]]: a place in this note.
-            if (anchor != null) port?.call("scrollToAnchor", anchor)
+            target.substringAfter('#', "").trim().ifEmpty { null }?.let { port?.call("scrollToAnchor", it) }
             return
         }
-        flushThen {
-            val id = repo.resolveLink(target, _state.value.folder)?.id ?: run {
-                // A link to a file (an image, a PDF) is not a note: do not make one up.
-                val ext = name.substringAfterLast('.', "").lowercase()
-                if (ext.isNotEmpty() && ext != "md" && ext.length <= 5 && !name.endsWith(" ")) {
-                    _events.send(EditorEvent.Message("“$name” is a file, not a note; attachments are not supported"))
-                    return@flushThen
-                }
-                val path = if (name.endsWith(".md", ignoreCase = true)) name.dropLast(3) else name
-                val folder = if ('/' in path) FolderPaths.normalize(path.substringBeforeLast('/')) else _state.value.folder
-                val title = path.substringAfterLast('/').trim()
-                if (title.isEmpty()) return@flushThen
-                repo.create(title = title, folder = folder)
+        leave(Exit.Link(target))
+    }
+
+    /** Opens the note [target] leads to (or its heading in this note). */
+    private suspend fun followLink(target: String) {
+        val anchor = target.substringAfter('#', "").trim().ifEmpty { null }
+        val name = WikiLinks.noteName(target)
+        val id = repo.resolveLink(target, _state.value.folder)?.id ?: run {
+            // A link to a file (an image, a PDF) is not a note: do not make one up.
+            if (WikiLinks.isAttachment(name)) {
+                _events.send(EditorEvent.Message("“$name” is a file, not a note; attachments are not supported"))
+                return
             }
-            if (id == noteId) {
-                if (anchor != null) port?.call("scrollToAnchor", anchor)
-            } else {
-                _events.send(EditorEvent.OpenNote(id, anchor))
-            }
+            val folder = if ('/' in name) FolderPaths.normalize(name.substringBeforeLast('/')) else _state.value.folder
+            val title = name.substringAfterLast('/').trim()
+            if (title.isEmpty()) return
+            repo.create(title = title, folder = folder)
+        }
+        if (id == noteId) {
+            if (anchor != null) port?.call("scrollToAnchor", anchor)
+        } else {
+            _events.send(EditorEvent.OpenNote(id, anchor))
         }
     }
 

@@ -93,25 +93,7 @@ fun WikilinkDialog(
     var alias by remember { mutableStateOf(state.alias ?: "") }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
-    // "Plan#Goals" links to a section of Plan: the note is looked up by the part before '#'.
-    val note = query.substringBefore('#')
-    val section = if ('#' in query) "#" + query.substringAfter('#') else ""
-    val q = note.trim().lowercase()
-    val matches = remember(q, titles) {
-        titles.asSequence()
-            .filter { it.isNotBlank() && (q.isEmpty() || it.lowercase().contains(q)) }
-            .distinct()
-            .sortedWith(compareBy<String>({ !it.lowercase().startsWith(q) }, { it.length }, { it.lowercase() }))
-            .take(50)
-            .toList()
-    }
-    val exact = note.isBlank() || matches.any { WikiLinks.key(it) == WikiLinks.key(note) }
-    /** Links to [title]: by its link name (a title may hold `#` or `|`), showing the title if they differ. */
-    fun pickTitle(title: String) {
-        val name = WikiLinks.linkName(title)
-        val shown = alias.ifBlank { null } ?: title.takeIf { it != name && !Regex("[\\[\\]|\\r\\n]").containsMatchIn(it) }
-        onPick(name + section, shown)
-    }
+    val choices = remember(query, titles) { LinkChoices.of(query, titles) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (state.editing) "Change link" else "Link to a note") },
@@ -125,23 +107,12 @@ fun WikilinkDialog(
                     modifier = Modifier.fillMaxWidth().focusRequester(focus),
                 )
                 LazyColumn(Modifier.heightIn(max = 260.dp)) {
-                    if (note.isBlank() && section.length > 1) {
-                        item {
-                            PickRow(Icons.Outlined.Description, "Link to “${section.drop(1)}” in this note", highlight = true) {
-                                onPick(section, alias.ifBlank { null })
-                            }
-                        }
-                    } else if (note.isNotBlank() && !exact) {
-                        item {
-                            PickRow(Icons.Outlined.Add, "Link to new note “${WikiLinks.linkName(note)}”", highlight = true) {
-                                onPick(WikiLinks.linkName(note) + section, alias.ifBlank { null })
-                            }
-                        }
-                    }
-                    items(matches) { title ->
-                        PickRow(Icons.Outlined.Description, if (section.length > 1) "$title › ${section.drop(1)}" else title) {
-                            pickTitle(title)
-                        }
+                    items(choices) { c ->
+                        PickRow(
+                            if (c.kind == LinkChoice.Kind.NEW_NOTE) Icons.Outlined.Add else Icons.Outlined.Description,
+                            c.label,
+                            highlight = c.kind != LinkChoice.Kind.NOTE,
+                        ) { onPick(c.target, alias.ifBlank { null } ?: c.alias) }
                     }
                 }
                 OutlinedTextField(

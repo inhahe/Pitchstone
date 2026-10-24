@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -23,6 +24,7 @@ import app.pitchstone.ui.AppNavigation
 import app.pitchstone.ui.NoteRoute
 import app.pitchstone.ui.theme.PitchstoneTheme
 import app.pitchstone.ui.theme.isDark
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -67,44 +69,49 @@ class MainActivity : ComponentActivity() {
     /** Text shared to the app becomes a note; a markdown file opened with it is imported. */
     private fun handle(intent: Intent?) {
         intent ?: return
-        val repo = container.repository
         when (intent.action) {
-            Intent.ACTION_SEND -> lifecycleScope.launch {
+            Intent.ACTION_SEND -> receive {
                 val stream = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
-                val id = if (stream != null) {
+                if (stream != null) {
                     importFile(stream)
                 } else {
-                    val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: return@launch
+                    val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: return@receive null
                     val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)?.trim().orEmpty()
                     // Shared text is plain text: its symbols must stay literal in the note.
-                    repo.create(title = subject, body = Importer.plainTextToMarkdown(text.replace("\r\n", "\n")))
+                    container.repository.create(title = subject, body = Importer.plainTextToMarkdown(text.replace("\r\n", "\n")))
                 }
-                if (id != null) openNote.value = id
             }
-            Intent.ACTION_VIEW -> intent.data?.let { uri ->
-                lifecycleScope.launch { importFile(uri)?.let { openNote.value = it } }
-            }
+            Intent.ACTION_VIEW -> intent.data?.let { uri -> receive { importFile(uri) } }
         }
     }
 
+    /** Makes a note of what another app handed over ([work]) and opens it; a failure is shown. */
+    private fun receive(work: suspend () -> Long?) {
+        lifecycleScope.launch {
+            val id = try {
+                work()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Toast.makeText(this@MainActivity, "Could not make a note of it: ${e.message ?: e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+                null
+            }
+            if (id != null) openNote.value = id
+        }
+    }
+
+    /** Imports the file at [uri] as a note; null if it is not shared content. */
     private suspend fun importFile(uri: Uri): Long? = withContext(Dispatchers.IO) {
         // Only content shared by another app: a file:// URI would be read with this app's own
         // permissions (its private files included).
         if (uri.scheme != "content") return@withContext null
-        runCatching {
-            var name = "Imported note"
-            var size = 0L
-            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
-                if (c.moveToFirst()) {
-                    c.getString(0)?.let { name = it }
-                    if (!c.isNull(1)) size = c.getLong(1)
-                }
-            }
-            if (size > Importer.MAX_BYTES) return@runCatching null
-            val text = contentResolver.openInputStream(uri)?.let(Importer::readText) ?: return@runCatching null
-            val ext = name.substringAfterLast('.', "").lowercase()
-            val body = if (ext == "txt") Importer.plainTextToMarkdown(text) else text
-            container.repository.import(name.substringBeforeLast('.'), body, "", createdAt = null, updatedAt = null)
-        }.getOrNull()
+        var name = "Imported note"
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0)?.let { name = it }
+        }
+        // Read with its size checked as it goes (Importer.readText): a provider's size may be missing.
+        val text = contentResolver.openInputStream(uri)?.let(Importer::readText) ?: return@withContext null
+        val ext = name.substringAfterLast('.', "").lowercase()
+        val body = if (ext == "txt") Importer.plainTextToMarkdown(text) else text
+        container.repository.import(name.substringBeforeLast('.'), body, "", createdAt = null, updatedAt = null)
     }
 }

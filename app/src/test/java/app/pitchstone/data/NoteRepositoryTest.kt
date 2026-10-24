@@ -7,6 +7,7 @@ import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -230,6 +231,53 @@ class NoteRepositoryTest {
     }
 
     @Test
+    fun `a rename leaves links that lead to another note whose title ends the same`() = runBlocking<Unit> {
+        repo.create("Client/Server", "")
+        val server = repo.create("Server", "")
+        val index = repo.create("Index", "[[Client/Server]] and [[Server]]")
+        val other = repo.create("Other", "only [[Client/Server]]")
+        assertThat(repo.backlinks(server).map { it.id }).containsExactly(index)
+        repo.save(server, "Servers", "")
+        assertThat(repo.applyRename(server, updateLinks = true)).isEqualTo(1)
+        assertThat(repo.note(index)!!.body).isEqualTo("[[Client/Server]] and [[Servers]]")
+        assertThat(repo.note(other)!!.body).isEqualTo("only [[Client/Server]]")
+    }
+
+    @Test
+    fun `a save expecting another title is refused`() = runBlocking<Unit> {
+        val id = repo.create("Renamed meanwhile", "body")
+        assertThat(repo.save(id, "Old", "new body", expectedBody = "body", expectedTitle = "Old"))
+            .isEqualTo(NoteRepository.SaveResult.CONFLICT)
+        assertThat(repo.note(id)!!.title).isEqualTo("Renamed meanwhile")
+    }
+
+    @Test
+    fun `new folders take the spelling of an existing folder that differs only in case`() = runBlocking<Unit> {
+        repo.createFolder("Work")
+        val kickoff = repo.create("Kickoff", "", "work/plans")
+        assertThat(repo.note(kickoff)!!.folder).isEqualTo("Work/plans")
+        val moved = repo.create("Moved", "")
+        repo.move(listOf(moved), "WORK/Plans")
+        assertThat(repo.note(moved)!!.folder).isEqualTo("Work/plans")
+        repo.createFolder("work/PLANS/deep")
+        assertThat(repo.folders().first()).containsExactly("Work", "Work/plans", "Work/plans/deep")
+    }
+
+    @Test
+    fun `notes larger than a database row can hold are refused`() = runBlocking<Unit> {
+        val big = "x".repeat(NoteRepository.MAX_NOTE_BYTES + 1)
+        assertThrows(NoteTooLargeException::class.java) { runBlocking { repo.create("T", big) } }
+        val id = repo.create("T", "small")
+        assertThrows(NoteTooLargeException::class.java) { runBlocking { repo.save(id, "T", big) } }
+        assertThat(repo.note(id)!!.body).isEqualTo("small")
+        // Characters of several UTF-8 bytes count as such.
+        assertThrows(NoteTooLargeException::class.java) {
+            runBlocking { repo.create("T", "日".repeat(NoteRepository.MAX_NOTE_BYTES / 3 + 1)) }
+        }
+        repo.create("T", "日".repeat(NoteRepository.MAX_NOTE_BYTES / 3 - 10))
+    }
+
+    @Test
     fun `md links count as backlinks and follow renames`() = runBlocking<Unit> {
         val target = repo.create("Plan", "")
         val linking = repo.create("Index", "[[Plan.md]]")
@@ -276,8 +324,11 @@ class NoteRepositoryTest {
 
     @Test
     fun `folders differing only in case are different folders`() = runBlocking<Unit> {
+        // New notes take an existing folder's spelling; a rename keeps its own, so a pair can exist.
         val upper = repo.create("A", "", "Work")
-        val lower = repo.create("B", "", "work/Sub")
+        val lower = repo.create("B", "", "Other/Sub")
+        repo.renameFolder("Other", "work")
+        assertThat(repo.note(lower)!!.folder).isEqualTo("work/Sub")
         assertThat(repo.countNotesIn("Work")).isEqualTo(1)
         assertThat(repo.deleteFolder("Work")).isEqualTo(1)
         assertThat(repo.note(upper)!!.trashedAt).isNotNull()

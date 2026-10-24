@@ -18,8 +18,8 @@ data class WikiLinkMatch(
     val alias: String?,
     val embed: Boolean,
 ) {
-    /** The linked note's name: the target without any `#heading` or `#^block` part. */
-    val noteName: String get() = target.substringBefore('#').trim()
+    /** The linked note's name ([WikiLinks.noteName]). */
+    val noteName: String get() = WikiLinks.noteName(target)
 
     /** The text a reader sees for this link. */
     val label: String
@@ -110,13 +110,34 @@ object WikiLinks {
     fun cleanTarget(target: String): String = target.replace(Regex("[\\[\\]|\\r\\n]"), "").trim()
 
     /**
+     * The note a link [target] names: the part before any `#heading` or `#^block`, trimmed, and
+     * without a `.md` suffix (links written by other apps may name the file). The one rule for
+     * resolving, indexing and renaming links; the editor's links.ts `wikilinkNote` matches it.
+     */
+    fun noteName(target: String): String =
+        target.substringBefore('#').trim().let { if (it.endsWith(".md", ignoreCase = true)) it.dropLast(3) else it }
+
+    /** File types a link may name that are attachments, not notes (as in Obsidian vaults). */
+    private val ATTACHMENTS = setOf(
+        "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "avif", "heic", "tif", "tiff", "ico",
+        "mp3", "wav", "m4a", "ogg", "oga", "flac", "aac", "opus", "3gp",
+        "mp4", "webm", "ogv", "mov", "mkv", "avi",
+        "pdf", "zip", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "epub",
+        "canvas", "base", "excalidraw",
+    )
+
+    /** Whether a link's [noteName] names an attachment (`pic.png`), which is not a note. */
+    fun isAttachment(noteName: String): Boolean =
+        noteName.substringAfterLast('/').substringAfterLast('.', "").lowercase() in ATTACHMENTS
+
+    /**
      * The title keys a link's note name ([WikiLinkMatch.noteName]) may refer to, most specific
      * first: the whole name, then the part after each `/`. Titles may contain `/` themselves,
      * so `Work/Meeting 10/23` may be note "Meeting 10/23" in folder Work, or note "23" in
      * Work/Meeting 10. A `.md` suffix, as in links from other apps, is ignored.
      */
     fun targetKeys(noteName: String): List<String> {
-        val name = noteName.trim().let { if (it.endsWith(".md", ignoreCase = true)) it.dropLast(3) else it }
+        val name = noteName(noteName)
         val tails = name.indices.filter { name[it] == '/' }.map { name.substring(it + 1) }
         return (listOf(name) + tails).map(::key).filter { it.isNotEmpty() }.distinct()
     }

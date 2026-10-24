@@ -2,6 +2,7 @@ package app.pitchstone.export
 
 import app.pitchstone.data.FolderPaths
 import app.pitchstone.data.NoteRepository
+import app.pitchstone.data.NoteTooLargeException
 import java.io.InputStream
 
 /** A file that can be imported as a note. */
@@ -25,7 +26,8 @@ data class ImportResult(
 
 object Importer {
     val EXTENSIONS = setOf("md", "markdown", "txt")
-    const val MAX_BYTES = 8L * 1024 * 1024
+    /** The largest file imported: a note can hold no more (NoteRepository.MAX_NOTE_BYTES). */
+    const val MAX_BYTES = NoteRepository.MAX_NOTE_BYTES.toLong()
 
     /**
      * The importable files in [dir] and its subfolders. Hidden folders (".obsidian", ".git",
@@ -53,9 +55,23 @@ object Importer {
         return out
     }
 
-    /** File content as text: UTF-8 (with or without a byte-order mark), newlines normalized. */
+    /**
+     * File content as text: UTF-8 (with or without a byte-order mark), newlines normalized.
+     * Throws [NoteTooLargeException] past [MAX_BYTES], counted as it is read: a provider's
+     * reported size can be missing or wrong.
+     */
     fun readText(input: InputStream): String {
-        val bytes = input.use { it.readBytes() }
+        val bytes = input.use { stream ->
+            val out = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val n = stream.read(buffer)
+                if (n < 0) break
+                out.write(buffer, 0, n)
+                if (out.size() > MAX_BYTES) throw NoteTooLargeException(out.size())
+            }
+            out.toByteArray()
+        }
         val text = if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
             String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
         } else {
@@ -126,6 +142,8 @@ object Importer {
                         imported++
                     }
                 }
+            } catch (e: NoteTooLargeException) {
+                large += label
             } catch (e: Exception) {
                 failed += label to (e.message ?: e.javaClass.simpleName)
             }

@@ -26,6 +26,12 @@ data class NoteIndex(
 )
 
 object NoteIndexer {
+    /**
+     * The most search text kept per note, in UTF-8 (see NoteRepository.MAX_NOTE_BYTES): words
+     * beyond it in a very long note are not found by search.
+     */
+    const val SEARCH_TEXT_MAX_BYTES = 600_000
+
     /** The same pattern the editor highlights (editor/src/editor/decorations.ts). */
     private val TAG = Regex("(^|[\\s(\\[{])#([\\p{L}\\p{N}_\\-/]*[\\p{L}_\\-/][\\p{L}\\p{N}_\\-/]*)")
     private const val SNIPPET_LENGTH = 240
@@ -63,9 +69,29 @@ object NoteIndexer {
         return NoteIndex(
             tags = tags,
             links = links,
-            searchText = (title + "\n" + plain).replace(Regex("[ \\t]+"), " ").lowercase(),
+            searchText = capUtf8((title + "\n" + plain).replace(Regex("[ \\t]+"), " ").lowercase(), SEARCH_TEXT_MAX_BYTES),
             snippet = collapsed.take(SNIPPET_LENGTH),
         )
+    }
+
+    /** The start of [s] that fits in [maxBytes] of UTF-8, cut between characters. */
+    internal fun capUtf8(s: String, maxBytes: Int): String {
+        if (s.length * 3L <= maxBytes) return s
+        var bytes = 0
+        var i = 0
+        while (i < s.length) {
+            val cp = s.codePointAt(i)
+            val n = when {
+                cp < 0x80 -> 1
+                cp < 0x800 -> 2
+                cp < 0x10000 -> 3
+                else -> 4
+            }
+            if (bytes + n > maxBytes) break
+            bytes += n
+            i += Character.charCount(cp)
+        }
+        return s.substring(0, i)
     }
 
     /**
@@ -124,10 +150,11 @@ object LinkRewriter {
      * Points the wikilinks in [markdown] that lead to the note named [oldName] at [newName]
      * instead, keeping any `#heading` part, alias, embed marker and `.md` suffix. A link whose
      * whole name matches is renamed whole (titles may contain `/`); otherwise a `folder/name`
-     * link whose part after a `/` matches keeps its folder. Returns null if no link changed; the
-     * result has `\n` line endings.
+     * link whose part after a `/` matches keeps its folder. [leadsToRenamed] is asked, with a
+     * link's note name ([WikiLinks.noteName]), whether that link means the renamed note; other
+     * links stay. Returns null if no link changed; the result has `\n` line endings.
      */
-    fun rename(markdown: String, oldName: String, newName: String): String? {
+    fun rename(markdown: String, oldName: String, newName: String, leadsToRenamed: (noteName: String) -> Boolean = { true }): String? {
         val oldKey = WikiLinks.key(oldName)
         val replacement = WikiLinks.linkName(newName)
         if (oldKey.isEmpty() || replacement.isEmpty()) return null
@@ -151,6 +178,7 @@ object LinkRewriter {
             val lead = notePart.length - notePart.trimStart().length
             val trimmed = notePart.trim()
             val name = if (trimmed.endsWith(".md", ignoreCase = true)) trimmed.dropLast(3) else trimmed
+            if (!leadsToRenamed(name)) continue
             val nameFrom = targetStart + lead
             // The whole name, or the part after a `/` (see WikiLinks.targetKeys).
             val start = if (WikiLinks.key(name) == oldKey) 0 else {
