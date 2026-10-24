@@ -3,9 +3,11 @@ package app.pitchstone.sync
 import android.util.Log
 import app.pitchstone.data.AppDatabase
 import app.pitchstone.data.AttachmentStore
+import app.pitchstone.data.FolderPaths
 import app.pitchstone.data.NoteRepository
 import app.pitchstone.export.DocEntry
 import app.pitchstone.export.DocumentDir
+import app.pitchstone.export.FileNames
 import app.pitchstone.export.Importer
 import app.pitchstone.export.find
 import kotlinx.coroutines.CancellationException
@@ -90,6 +92,10 @@ class FolderSync(
 
         private const val TAG = "Pitchstone"
         private const val MIME = "application/octet-stream"
+
+        /** Marks a picture entry whose two copies differ ([syncPictures]). */
+        private const val CLASH = "clash:"
+        private const val CLASH_PROBLEM = "a different picture of this name is in the app; neither was changed"
 
         /** "name 1.ext", "name 2.ext"... whichever is free in both [a] and [b]. */
         private fun freeName(name: String, a: DocumentDir, b: DocumentDir): String {
@@ -236,10 +242,18 @@ class FolderSync(
         val hash = hasher(texts, problems)
         fun allowed(a: SyncAction) = a.changesNote()?.let { it in busy } != true
 
+        // Nothing listed while notes are paired: more likely a folder that cannot be read right
+        // now (a card not there, a folder moved) than one emptied. Nothing is done, not even
+        // forgetting pairs, until the user says which.
+        val pairedLive = s.pairs.count { planned[it.noteId]?.trashed == false }
+        if (vault.notes.isEmpty() && pairedLive > 0 && gone == GoneFiles.ASK) {
+            return@withContext SyncReport(at = clock(), heldBack = pairedLive)
+        }
+
         var plan = SyncPlanner.plan(vault.files, s.notes, s.pairs, hash).filter(::allowed)
         val trashing = plan.filterIsInstance<SyncAction.TrashNote>()
         var heldBack = 0
-        // An empty listing with notes paired is more likely a folder that cannot be read right now.
+        // (With an empty listing, only a choice the user made gets here.)
         if (trashing.size > TRASH_LIMIT || (trashing.isNotEmpty() && vault.notes.isEmpty())) {
             when (gone) {
                 GoneFiles.ASK -> {
@@ -260,6 +274,17 @@ class FolderSync(
         val conflicts = ArrayList<String>()
         val adopted = ArrayList<Long>()
         val trashDir by lazy { vault.root.subdirectory(".trash") }
+
+        // The app's folders by the folder each is in the synced folder ("Q&A: misc" is "Q&A misc"),
+        // so that a file moved or made there goes to the app's folder of that spelling.
+        val appFolders = HashMap<String, String>()
+        for (n in s.notes) {
+            if (!n.trashed) for (f in FolderPaths.withAncestors(n.folder)) appFolders.putIfAbsent(SyncPlanner.folderFor(f).lowercase(), f)
+        }
+        fun appFolder(path: String): String {
+            val folder = path.substringBeforeLast('/', "")
+            return appFolders[folder.lowercase()] ?: folder
+        }
 
         fun located(path: String) = vault.notes[path.lowercase()] ?: error("it is gone")
 
@@ -384,8 +409,9 @@ class FolderSync(
                             if (saved == NoteRepository.SaveResult.CONFLICT) continue
                             remember(action.path, note.id, SyncHash.of(text))
                         } else {
-                            write(action.path, note.body, create = false)
+                            // The version first: a file overwritten before it would be lost.
                             repo.keepVersion(note.id, note.title, text)
+                            write(action.path, note.body, create = false)
                             remember(action.path, note.id, SyncHash.of(note.body))
                         }
                         conflicts += note.title.ifBlank { "Untitled" }
@@ -394,7 +420,12 @@ class FolderSync(
                         val note = repo.note(action.noteId) ?: continue
                         if (!unchanged(note.body, note.id)) continue
                         val name = action.to.substringAfterLast('/')
-                        repo.retitle(note.id, name.dropLast(3), action.to.substringBeforeLast('/', ""))
+                        // The note keeps a title the name still suits (a character files cannot
+                        // hold, a clash's number), and a folder the file is still in.
+                        val title = if (SyncPlanner.fitsName(name, FileNames.safe(note.title))) note.title else name.dropLast(3)
+                        val folder = action.to.substringBeforeLast('/', "")
+                        val keepFolder = SyncPlanner.fitsFolder(folder, SyncPlanner.folderFor(note.folder))
+                        repo.retitle(note.id, title, if (keepFolder) note.folder else appFolder(action.to))
                         if (action.writeNote) write(action.to, note.body, create = false)
                         dao.remove(action.from)
                         remember(action.to, note.id, if (action.writeNote) SyncHash.of(note.body) else SyncHash.of(texts.text(action.to)))
@@ -405,7 +436,7 @@ class FolderSync(
                         val f = located(action.path)
                         val text = texts.text(action.path)
                         val id = repo.import(
-                            title = f.entry.name.dropLast(3), body = text, folder = action.path.substringBeforeLast('/', ""),
+                            title = f.entry.name.dropLast(3), body = text, folder = appFolder(action.path),
                             createdAt = f.entry.lastModified, updatedAt = f.entry.lastModified,
                         )
                         remember(action.path, id, SyncHash.of(text))
@@ -498,19 +529,32 @@ class FolderSync(
                     inVault != null && stored != null -> {
                         val e = inVault.entry
                         val entry = entries[inVault.path.lowercase()]
-                        if (entry != null && entry.modified == e.lastModified && entry.size == e.size) continue
+                        val clash = entry?.hash?.startsWith(CLASH) == true
+                        val untouched = entry != null && entry.modified == e.lastModified && entry.size == e.size
+                        if (untouched && clash) {
+                            problems.putIfAbsent(inVault.path, CLASH_PROBLEM)
+                            continue
+                        }
+                        if (untouched && stored.length() == e.size) continue
                         if (e.size > AttachmentStore.MAX_BYTES) error("larger than a picture can be")
                         val bytes = inVault.dir.read(e).use { it.readBytes() }
                         val hash = SyncHash.of(bytes)
-                        if (hash != SyncHash.of(stored.readBytes())) {
-                            if (entry != null && hash != entry.hash) {
+                        val recorded = when {
+                            hash == SyncHash.of(stored.readBytes()) -> hash
+                            // Changed in the folder since both had it: the app's copy follows.
+                            entry != null && !clash && hash != entry.hash -> {
                                 attachments.replace(stored.name, bytes.inputStream())
                                 copied++
-                            } else if (entry == null) {
-                                problems.putIfAbsent(inVault.path, "a different picture of this name is in the app; neither was changed")
+                                hash
+                            }
+                            // Two pictures of one name: both are left, and remembered as such, so
+                            // that a later change of either never replaces the other.
+                            else -> {
+                                problems.putIfAbsent(inVault.path, CLASH_PROBLEM)
+                                CLASH + hash
                             }
                         }
-                        dao.put(SyncEntryEntity(inVault.path, attachment = stored.name, hash = hash, modified = e.lastModified, size = e.size))
+                        dao.put(SyncEntryEntity(inVault.path, attachment = stored.name, hash = recorded, modified = e.lastModified, size = e.size))
                     }
                     inVault != null -> {
                         val e = inVault.entry

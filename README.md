@@ -114,7 +114,8 @@ The share icon in a note offers:
 - **Email**: the note's title as subject and the note as body, as **Formatted** text (headings,
   bold, lists, links and tables appear formatted in the email), **Markdown**, or **Plain text**.
   Optionally the note is attached as a file (`.html`, `.md` or `.txt`); an `.html` file
-  holds the note's pictures, while an email names them in brackets.
+  holds the note's pictures (up to 20 MB of them; the rest are named), while an email names
+  them in brackets.
 - **Share as text…** and **Share as file…** to any app.
 
 ## Importing

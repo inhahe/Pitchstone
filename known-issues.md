@@ -80,6 +80,9 @@
 - Empty folders are not synced, and a note with neither title nor text is not written.
 - Files are read as UTF-8; a file in another encoding shows replacement characters and is
   written back as UTF-8 if the note is edited.
-- **Pictures**: two different pictures of one name meeting at the first sync are both left as
-  they are (Settings lists them); a picture is never deleted by a sync, and one deleted from the
-  folder comes back while a note still shows it.
+- **Pictures**: two different pictures of one name are both left as they are, and stay so
+  (Settings lists them) until one is made the same as the other; a picture is never deleted by
+  a sync, and one deleted from the folder comes back while a note still shows it.
+- A folder in the vault whose name the app spells otherwise ("Q&A: misc" is `Q&A misc`, a
+  colon being something files cannot hold) is the app's folder of that spelling; a folder
+  made in the vault takes the vault's spelling.

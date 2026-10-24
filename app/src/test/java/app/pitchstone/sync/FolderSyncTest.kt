@@ -216,13 +216,15 @@ class FolderSyncTest {
     @Test
     fun `many files deleted at once are held back until the user decides`() = runBlocking<Unit> {
         val ids = (1..FolderSync.TRASH_LIMIT + 1).map { repo.create("Note $it", "text $it") }
+        // One file stays: the folder can be read, and the count alone holds the rest back.
+        repo.create("Stays", "here")
         sync()
         for (i in 1..ids.size) assertThat(file("Note $i.md").delete()).isTrue()
 
         val asked = sync()
         assertThat(asked.heldBack).isEqualTo(ids.size)
         assertThat(asked.trashedNotes).isEqualTo(0)
-        assertThat(repo.allNotes()).hasSize(ids.size)
+        assertThat(repo.allNotes()).hasSize(ids.size + 1)
 
         assertThat(sync(GoneFiles.WRITE_AGAIN).written).isEqualTo(ids.size)
         assertThat(file("Note 1.md").readText()).isEqualTo("text 1")
@@ -230,7 +232,7 @@ class FolderSyncTest {
 
         for (i in 1..ids.size) assertThat(file("Note $i.md").delete()).isTrue()
         assertThat(sync(GoneFiles.TRASH_NOTES).trashedNotes).isEqualTo(ids.size)
-        assertThat(repo.allNotes()).isEmpty()
+        assertThat(repo.allNotes().map { it.title }).containsExactly("Stays")
     }
 
     @Test
@@ -298,6 +300,77 @@ class FolderSyncTest {
         assertThat(report.problems.single()).startsWith("same.png: ")
         assertThat(store.file("same.png")!!.readBytes()).isEqualTo(byteArrayOf(1))
         assertThat(file("same.png").readBytes()).isEqualTo(byteArrayOf(2))
+    }
+
+    @Test
+    fun `a different picture of one name is never replaced, even when the folder's copy changes later`() = runBlocking<Unit> {
+        store.add(byteArrayOf(1).inputStream(), "photo.png")
+        repo.create("Here", "![[photo.png]]")
+        putBytes("photo.png", byteArrayOf(2))
+        sync()
+        // Still reported while it lasts.
+        assertThat(sync().problems.single()).startsWith("photo.png: ")
+        putBytes("photo.png", byteArrayOf(3))
+        assertThat(sync().problems.single()).startsWith("photo.png: ")
+        assertThat(store.file("photo.png")!!.readBytes()).isEqualTo(byteArrayOf(1))
+        // Made the same: synced as one from then on.
+        putBytes("photo.png", byteArrayOf(1))
+        assertThat(sync().problems).isEmpty()
+        putBytes("photo.png", byteArrayOf(4))
+        sync()
+        assertThat(store.file("photo.png")!!.readBytes()).isEqualTo(byteArrayOf(4))
+    }
+
+    @Test
+    fun `a file moved outside keeps the note's title where the name still suits it`() = runBlocking<Unit> {
+        val id = repo.create("Meeting 10/23", "notes")
+        val linker = repo.create("Linker", "see [[Meeting 10/23]]")
+        sync()
+        assertThat(file("Meeting 10 23.md").exists()).isTrue()
+        File(vault, "Archive").mkdirs()
+        assertThat(file("Meeting 10 23.md").renameTo(file("Archive/Meeting 10 23.md"))).isTrue()
+        sync()
+        assertThat(repo.note(id)!!.title).isEqualTo("Meeting 10/23")
+        assertThat(repo.note(id)!!.folder).isEqualTo("Archive")
+        assertThat(repo.note(linker)!!.body).isEqualTo("see [[Meeting 10/23]]")
+    }
+
+    @Test
+    fun `a folder in the synced folder is the app's folder of that file name`() = runBlocking<Unit> {
+        repo.create("Old", "x", folder = "Q&A: misc")
+        sync()
+        assertThat(file("Q&A misc/Old.md").exists()).isTrue()
+        put("Q&A misc/New.md", "new")
+        put("Elsewhere.md", "moved")
+        sync()
+        assertThat(note("New").folder).isEqualTo("Q&A: misc")
+        // Moved into it outside: into the app's folder too.
+        assertThat(file("Elsewhere.md").renameTo(file("Q&A misc/Elsewhere.md"))).isTrue()
+        sync()
+        assertThat(note("Elsewhere").folder).isEqualTo("Q&A: misc")
+    }
+
+    @Test
+    fun `a folder that lists empty changes nothing, not even pairs, until it is back`() = runBlocking<Unit> {
+        repo.create("A", "a")
+        val b = repo.create("B", "b")
+        val c = repo.create("C", "c")
+        sync()
+        repo.moveToTrash(listOf(b))
+        repo.save(c, "C", "c edited")
+        // The folder is away (a card taken out): its files are elsewhere for a while.
+        val away = Files.createTempDirectory("away").toFile()
+        for (name in listOf("A.md", "B.md", "C.md")) assertThat(file(name).renameTo(File(away, name))).isTrue()
+        assertThat(sync().heldBack).isEqualTo(2)
+        assertThat(file("C.md").exists()).isFalse()
+        for (name in listOf("A.md", "B.md", "C.md")) assertThat(File(away, name).renameTo(file(name))).isTrue()
+        away.delete()
+
+        sync()
+        assertThat(repo.allNotes().map { it.title }).containsExactly("A", "C")
+        assertThat(file(".trash/B.md").exists()).isTrue()
+        assertThat(file("C.md").readText()).isEqualTo("c edited")
+        assertThat(vault.list()!!.filter { it.endsWith(".md") }).containsExactly("A.md", "C.md")
     }
 
     @Test

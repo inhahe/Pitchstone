@@ -11,6 +11,7 @@ import android.webkit.MimeTypeMap
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.nio.ByteBuffer
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.max
@@ -30,10 +31,6 @@ object ImagePrep {
 
     /** An image ready to store: its content and the name it would like. */
     class Prepared(val open: () -> InputStream, val name: String)
-
-    /** Obsidian's name for a pasted image: "Pasted image 20261023211500.png". */
-    fun pastedName(mime: String, now: LocalDateTime = LocalDateTime.now()): String =
-        "Pasted image ${STAMP.format(now)}.${extensionOf(mime) ?: "png"}"
 
     /** The usual extension for [mime] ("image/jpeg" -> "jpg"), or null. */
     fun extensionOf(mime: String): String? = when (mime.lowercase()) {
@@ -70,21 +67,45 @@ object ImagePrep {
         }
         val mime = (resolver.getType(uri) ?: "").lowercase()
         val ext = displayName?.substringAfterLast('.', "")?.lowercase()?.takeIf { it.isNotEmpty() } ?: extensionOf(mime) ?: "png"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && mime in PHOTOS) {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            val tooBig = shrink && max(bounds.outWidth, bounds.outHeight) > MAX_SIDE
-            if (mime in CONVERTED || tooBig) {
-                val jpeg = reencode(resolver, uri, if (tooBig) MAX_SIDE else Int.MAX_VALUE)
-                return Prepared({ ByteArrayInputStream(jpeg) }, pickedName(displayName, "jpg"))
-            }
-        }
-        return Prepared({ resolver.openInputStream(uri) ?: error("Cannot read the picture") }, pickedName(displayName, ext))
+        val open = { resolver.openInputStream(uri) ?: error("Cannot read the picture") }
+        return prepare(mime, shrink, open, { ImageDecoder.createSource(resolver, uri) }, ext) { pickedName(displayName, it) }
     }
 
-    /** The image at [uri] as JPEG, at most [maxSide] pixels on its long side (turned as its EXIF says). */
-    private fun reencode(resolver: ContentResolver, uri: Uri, maxSide: Int): ByteArray {
-        val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
+    /** A pasted or dropped image, [bytes] of type [mime]: as [fromUri], named as Obsidian names pastes ("Pasted image 20261023211500.png"). */
+    fun fromBytes(bytes: ByteArray, mime: String, shrink: Boolean, now: LocalDateTime = LocalDateTime.now()): Prepared {
+        val type = mime.lowercase()
+        return prepare(type, shrink, { ByteArrayInputStream(bytes) }, { ImageDecoder.createSource(ByteBuffer.wrap(bytes)) }, extensionOf(type) ?: "png") {
+            "Pasted image ${STAMP.format(now)}.$it"
+        }
+    }
+
+    /**
+     * The image [open] reads, of type [mime], as it is (named [name] of [ext]), or re-encoded as
+     * JPEG from [source] when it is HEIC/HEIF or, with [shrink], a photo over [MAX_SIDE].
+     */
+    private fun prepare(
+        mime: String,
+        shrink: Boolean,
+        open: () -> InputStream,
+        source: () -> ImageDecoder.Source,
+        ext: String,
+        name: (ext: String) -> String,
+    ): Prepared {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && mime in PHOTOS) {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            open().use { BitmapFactory.decodeStream(it, null, bounds) }
+            val tooBig = shrink && max(bounds.outWidth, bounds.outHeight) > MAX_SIDE
+            if (mime in CONVERTED || tooBig) {
+                val jpeg = reencode(source(), if (tooBig) MAX_SIDE else Int.MAX_VALUE)
+                return Prepared({ ByteArrayInputStream(jpeg) }, name("jpg"))
+            }
+        }
+        return Prepared(open, name(ext))
+    }
+
+    /** The image from [source] as JPEG, at most [maxSide] pixels on its long side (turned as its EXIF says). */
+    private fun reencode(source: ImageDecoder.Source, maxSide: Int): ByteArray {
+        val bitmap = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             val long = max(info.size.width, info.size.height)
             if (long > maxSide) {

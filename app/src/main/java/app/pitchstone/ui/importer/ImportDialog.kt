@@ -135,6 +135,10 @@ fun ImportDialog(currentFolder: String, folders: List<String>, onDismiss: () -> 
                         Text("Could not read ${r.failed.size}:", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.error)
                         r.failed.take(20).forEach { (name, why) -> Text("• $name: $why", style = MaterialTheme.typography.bodySmall) }
                     }
+                    if (r.failedPictures.isNotEmpty()) {
+                        Text("Pictures not stored (the notes showing them were imported):", fontWeight = FontWeight.Medium)
+                        r.failedPictures.take(20).forEach { (name, why) -> Text("• $name: $why", style = MaterialTheme.typography.bodySmall) }
+                    }
                 }
             },
             confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },

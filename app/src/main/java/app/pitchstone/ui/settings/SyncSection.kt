@@ -61,6 +61,11 @@ fun SyncSection(folderUri: String?) {
         if (uri == null) return@rememberLauncherForActivityResult
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         runCatching { context.contentResolver.takePersistableUriPermission(uri, flags) }
+        // The folder set already (chosen again after its permission was lost): it carries on.
+        if (uri.toString() == folderUri) {
+            container.appScope.launch { sync.start(uri) }
+            return@rememberLauncherForActivityResult
+        }
         choosing = uri
         preview = null
         previewError = null

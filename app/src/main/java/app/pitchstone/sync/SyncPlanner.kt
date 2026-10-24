@@ -153,11 +153,13 @@ object SyncPlanner {
             }
         }
 
+        // Notes by the file they would have, for matching unpaired files to them.
+        val byNaturalPath = notes.filter { !it.trashed && !it.blank }.groupBy { naturalPath(it).lowercase() }
         for (file in unpaired) {
             if (file.path.lowercase() in usedFiles) continue
             usedFiles += file.path.lowercase()
             // A note without a pair that would be this file: the first sync, or one made on both sides.
-            val match = notes.firstOrNull { !it.trashed && !it.blank && it.id !in usedNotes && naturalPath(it).equals(file.path, ignoreCase = true) }
+            val match = byNaturalPath[file.path.lowercase()]?.firstOrNull { it.id !in usedNotes }
             if (match == null) {
                 out += SyncAction.Import(file.path)
                 continue
@@ -177,8 +179,11 @@ object SyncPlanner {
     }
 
     /** The folder path of [note]'s file, its folders made valid file names ("" at the top). */
-    fun folderFor(note: SyncNote): String =
-        note.folder.split('/').filter { it.isNotBlank() }.joinToString("/") { FileNames.safe(it, "Folder") }
+    fun folderFor(note: SyncNote): String = folderFor(note.folder)
+
+    /** The folder path in the synced folder for the app's folder [folder]. */
+    fun folderFor(folder: String): String =
+        folder.split('/').filter { it.isNotBlank() }.joinToString("/") { FileNames.safe(it, "Folder") }
 
     /** The file [note] would have with nothing in the way: "Folder/Title.md". */
     fun naturalPath(note: SyncNote): String {
@@ -214,7 +219,7 @@ object SyncPlanner {
      * "base (2).md" (a clash numbered it), ignoring case, or a name that means the same but was
      * spelled by someone else (a `?` in it, which [FileNames.safe] would have replaced).
      */
-    private fun fitsName(name: String, base: String): Boolean {
+    fun fitsName(name: String, base: String): Boolean {
         if (!name.endsWith(".md", ignoreCase = true)) return false
         val stem = name.dropLast(3)
         val unnumbered = NUMBERED.matchEntire(stem)?.groupValues?.get(1)
@@ -222,7 +227,7 @@ object SyncPlanner {
     }
 
     /** Whether the folder path [current] is [wanted] ([folderFor]), each part as [fitsName] would judge it. */
-    private fun fitsFolder(current: String, wanted: String): Boolean {
+    fun fitsFolder(current: String, wanted: String): Boolean {
         val a = current.split('/').filter { it.isNotEmpty() }
         val b = wanted.split('/').filter { it.isNotEmpty() }
         return a.size == b.size && a.zip(b).all { (x, y) -> x.equals(y, ignoreCase = true) || FileNames.safe(x, "Folder").equals(y, ignoreCase = true) }

@@ -352,7 +352,10 @@ class EditorViewModel(
             "pasteImage" -> {
                 val data = str("data") ?: return
                 val mime = str("mime") ?: "image/png"
-                addImage { container.attachments.add(Base64.decode(data, Base64.DEFAULT).inputStream(), ImagePrep.pastedName(mime)) }
+                addImage {
+                    val prepared = ImagePrep.fromBytes(Base64.decode(data, Base64.DEFAULT), mime, settings.value.shrinkLargePhotos)
+                    container.attachments.add(prepared.open(), prepared.name)
+                }
             }
             "editLink" -> _state.update {
                 it.copy(

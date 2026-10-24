@@ -106,8 +106,9 @@ class SyncManager(
      * just left the front, and could be stopped before a sync of its own finished.
      */
     fun requestBackgroundSync() {
+        // After one running (replacing it would cancel it midway), or replacing one not started.
         WorkManager.getInstance(context).enqueueUniqueWork(
-            WORK_SOON, ExistingWorkPolicy.REPLACE,
+            WORK_SOON, ExistingWorkPolicy.APPEND_OR_REPLACE,
             // A few seconds: the saves the editor makes on leaving go first.
             OneTimeWorkRequestBuilder<SyncWorker>().setInitialDelay(3, TimeUnit.SECONDS).build(),
         )
@@ -131,15 +132,23 @@ class SyncManager(
     /** The display name of the folder [uri]. */
     fun folderName(uri: String): String = runCatching { SafDir.root(context.contentResolver, Uri.parse(uri)).name }.getOrDefault("the folder")
 
-    /** Starts syncing with [uri] (whose permission is held), afresh: what was paired with another folder is forgotten. */
+    /**
+     * Starts syncing with [uri] (whose permission is held). Another folder than the one set starts
+     * afresh, what was paired with the old one forgotten; the same one (chosen again after its
+     * permission was lost) carries on where it was.
+     */
     suspend fun start(uri: Uri) {
         lock.withLock {
             val old = settings.current().syncFolderUri
-            entries.clear()
+            if (old != uri.toString()) {
+                entries.clear()
+                prefs.edit().remove(KEY_REPORT).remove(KEY_CHANGE).apply()
+                _status.value = SyncStatus()
+            }
             settings.update { it.copy(syncFolderUri = uri.toString()) }
             if (old != null && old != uri.toString()) releasePermission(old)
-            prefs.edit().remove(KEY_REPORT).remove(KEY_CHANGE).remove(KEY_ERROR).apply()
-            _status.value = SyncStatus()
+            prefs.edit().remove(KEY_ERROR).apply()
+            _status.update { it.copy(error = null) }
         }
         schedule()
         syncNow()
@@ -177,6 +186,7 @@ class SyncManager(
         val s = settings.current()
         val uri = s.syncFolderUri ?: return@withLock null
         _status.update { it.copy(running = true) }
+        // A sync stopped midway (WorkManager cancelling it) must not leave "Syncing…" up.
         try {
             val root = SafDir.root(context.contentResolver, Uri.parse(uri))
             val report = engine.sync(root, s.updateLinksOnRename, busy = open.keys.toSet(), gone = gone)
@@ -195,13 +205,15 @@ class SyncManager(
             if (e is CancellationException) throw e
             Log.w(TAG, "Sync failed", e)
             val why = if (e is SecurityException) {
-                "Pitchstone may no longer use the folder. Choose it again."
+                "Pitchstone may no longer use the folder. Choose it again with Change folder."
             } else {
                 "Could not read the folder: ${e.message ?: e.javaClass.simpleName}"
             }
             prefs.edit().putString(KEY_ERROR, why).apply()
             _status.update { it.copy(running = false, error = why) }
             null
+        } finally {
+            _status.update { it.copy(running = false) }
         }
     }
 

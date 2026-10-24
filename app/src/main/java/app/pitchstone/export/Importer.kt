@@ -26,6 +26,8 @@ data class ImportResult(
     val skippedLarge: List<String>,
     /** Pictures the imported notes show, stored with them (new ones only). */
     val pictures: Int = 0,
+    /** Pictures a note shows that could not be stored (too large, unreadable), and why; the note is imported. */
+    val failedPictures: List<Pair<String, String>> = emptyList(),
 )
 
 object Importer {
@@ -140,6 +142,7 @@ object Importer {
         val large = ArrayList<String>()
         val pictures = files.filterNot(::isNote).groupBy { "${it.title}.${it.extension}".lowercase() }
         val storedAs = HashMap<ImportFile, String>()
+        val pictureFailed = HashMap<ImportFile, String>()
         var newPictures = 0
         val before = attachments?.names()?.map { it.lowercase() }?.toSet().orEmpty()
         files.filter(::isNote).forEachIndexed { i, f ->
@@ -152,18 +155,28 @@ object Importer {
                     val text = readText(f.open())
                     var body = if (f.extension == "txt" && !txtAsMarkdown) plainTextToMarkdown(text) else text
                     if (attachments != null) {
+                        // Renamed all at once: one picture's new name may be another's old one.
+                        val renames = HashMap<String, String>()
                         for (mention in AttachmentStore.mentionedNames(body)) {
                             // The picture nearest the note: in its folder, else the first found.
                             val candidates = pictures[mention] ?: continue
                             val picture = candidates.firstOrNull { it.folder == f.folder } ?: candidates.first()
+                            if (picture in pictureFailed) continue
                             val fileName = "${picture.title}.${picture.extension}"
-                            val name = storedAs.getOrPut(picture) {
-                                val stored = attachments.addOrReuse(picture.open(), fileName)
-                                if (stored.lowercase() !in before) newPictures++
-                                stored
+                            // A picture that cannot be stored is reported; the note comes in without it.
+                            val name = storedAs[picture] ?: try {
+                                attachments.addOrReuse(picture.open(), fileName).also {
+                                    storedAs[picture] = it
+                                    if (it.lowercase() !in before) newPictures++
+                                }
+                            } catch (e: Exception) {
+                                if (e is kotlinx.coroutines.CancellationException) throw e
+                                pictureFailed[picture] = e.message ?: e.javaClass.simpleName
+                                continue
                             }
-                            if (!name.equals(fileName, ignoreCase = true)) body = LinkRewriter.renameAttachment(body, fileName, name)
+                            if (!name.equals(fileName, ignoreCase = true)) renames[fileName] = name
                         }
+                        if (renames.isNotEmpty()) body = LinkRewriter.renameAttachments(body, renames)
                     }
                     if (Triple(f.title, folder.lowercase(), body) in existing) {
                         present++
@@ -180,6 +193,7 @@ object Importer {
             }
             progress(i + 1)
         }
-        return ImportResult(imported, present, failed, large, newPictures)
+        val failedPictures = pictureFailed.map { (f, why) -> (if (f.folder.isEmpty()) "" else "${f.folder}/") + "${f.title}.${f.extension}" to why }
+        return ImportResult(imported, present, failed, large, newPictures, failedPictures)
     }
 }

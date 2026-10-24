@@ -115,6 +115,8 @@ $heading$body</body>
 
     /** Pictures larger than this are not written into a page; their name stands in. */
     private const val INLINE_MAX_BYTES = 10_000_000L
+    /** Nor are those past this many bytes of pictures in one page (it is built in memory, a third larger in base64). */
+    const val INLINE_TOTAL_BYTES = 20_000_000L
 
     private class CustomRenderer(
         private val context: HtmlNodeRendererContext,
@@ -122,6 +124,8 @@ $heading$body</body>
         private val attachments: (String) -> File?,
     ) : NodeRenderer {
         private val html = context.writer
+        /** Bytes of pictures written into the page so far. */
+        private var inlined = 0L
 
         override fun getNodeTypes(): Set<Class<out Node>> =
             setOf(WikiLink::class.java, Highlight::class.java, TaskListItemMarker::class.java, Image::class.java)
@@ -175,7 +179,9 @@ $heading$body</body>
         /** A stored picture: in a page, the picture itself; in an email, or if missing, its name. */
         private fun picture(reference: String, alt: String) {
             val file = attachments(reference)
-            if (!email && file != null && file.length() <= INLINE_MAX_BYTES) {
+            val size = file?.length() ?: 0
+            if (!email && file != null && size <= INLINE_MAX_BYTES && inlined + size <= INLINE_TOTAL_BYTES) {
+                inlined += size
                 val mime = MimeTypes.forExtension(file.extension)
                 val data = Base64.getEncoder().encodeToString(file.readBytes())
                 html.tag("img", mapOf("src" to "data:$mime;base64,$data", "alt" to alt), true)

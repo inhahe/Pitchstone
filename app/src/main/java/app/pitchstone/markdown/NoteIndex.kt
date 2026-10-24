@@ -204,7 +204,15 @@ object LinkRewriter {
      * keeping what surrounds the name. Names compare ignoring case. Returns [markdown]
      * unchanged if nothing mentions it.
      */
-    fun renameAttachment(markdown: String, from: String, to: String): String {
+    fun renameAttachment(markdown: String, from: String, to: String): String = renameAttachments(markdown, mapOf(from to to))
+
+    /**
+     * [renameAttachment] for several at once, [renames] from old name to new: each mention is
+     * renamed once, by the name it had, so a new name that is another's old one is not renamed
+     * again.
+     */
+    fun renameAttachments(markdown: String, renames: Map<String, String>): String {
+        val byName = renames.mapKeys { it.key.lowercase() }
         val source = Markdown.normalizeNewlines(markdown)
         val body = Markdown.splitFrontMatter(source).body
         val head = source.length - body.length
@@ -213,11 +221,13 @@ object LinkRewriter {
             val targetStart = link.start + (if (link.embed) 1 else 0) + 2
             val inner = body.substring(targetStart, link.end - 2)
             val noteEnd = listOf(inner.indexOf('|'), inner.indexOf('#')).filter { it >= 0 }.minOrNull() ?: inner.length
-            val name = inner.substring(0, noteEnd).trimEnd()
+            var name = inner.substring(0, noteEnd)
+            // `![[pic.png\|200]]` in a table: the backslash belongs to the `|`.
+            if (noteEnd < inner.length && inner[noteEnd] == '|' && name.endsWith('\\')) name = name.dropLast(1)
+            name = name.trimEnd()
             val baseFrom = maxOf(name.lastIndexOf('/'), name.lastIndexOf('\\')) + 1
-            if (name.substring(baseFrom).trim().equals(from, ignoreCase = true)) {
-                edits += (targetStart + baseFrom until targetStart + name.length) to to
-            }
+            val to = byName[name.substring(baseFrom).trim().lowercase()] ?: continue
+            edits += (targetStart + baseFrom until targetStart + name.length) to to
         }
         for (m in DESTINATION.findAll(body)) {
             val angled = m.groups[1] != null
@@ -226,10 +236,9 @@ object LinkRewriter {
             val baseFrom = maxOf(raw.lastIndexOf('/'), raw.lastIndexOf('\\')) + 1
             val tail = raw.substring(baseFrom)
             val name = if (angled) tail else runCatching { java.net.URLDecoder.decode(tail.replace("+", "%2B"), "UTF-8") }.getOrDefault(tail)
-            if (name.equals(from, ignoreCase = true)) {
-                val spelled = if (angled) to else to.replace("%", "%25").replace(" ", "%20").replace("(", "%28").replace(")", "%29")
-                edits += (dest.range.first + baseFrom..dest.range.last) to spelled
-            }
+            val to = byName[name.lowercase()] ?: continue
+            val spelled = if (angled) to else to.replace("%", "%25").replace(" ", "%20").replace("(", "%28").replace(")", "%29")
+            edits += (dest.range.first + baseFrom..dest.range.last) to spelled
         }
         if (edits.isEmpty()) return markdown
         val out = StringBuilder(body)

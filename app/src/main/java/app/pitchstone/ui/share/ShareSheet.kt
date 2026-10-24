@@ -39,7 +39,9 @@ import app.pitchstone.container
 import app.pitchstone.data.ShareFormat
 import app.pitchstone.share.Sharing
 import app.pitchstone.ui.export.SwitchRow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Email or share a note. [onError] reports a problem (no email app, say). */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,18 +53,24 @@ fun ShareSheet(title: String, markdown: String, onDismiss: () -> Unit, onError: 
     val s = settings ?: return
     val scope = rememberCoroutineScope()
 
-    // Problems are reported after the sheet closes, where the message can be seen.
+    // Problems are reported after the sheet closes, where the message can be seen. The intent
+    // is built off the main thread (a file with the note's pictures can take a while), in the
+    // app's scope, since the sheet closes meanwhile.
     fun start(build: () -> Intent, missing: String) {
-        val problem = try {
-            context.startActivity(build())
-            null
-        } catch (_: ActivityNotFoundException) {
-            missing
-        } catch (e: Exception) {
-            e.message ?: "Could not share the note"
-        }
         onDismiss()
-        problem?.let(onError)
+        container.appScope.launch {
+            val problem = try {
+                val intent = withContext(Dispatchers.IO) { build() }
+                withContext(Dispatchers.Main) { context.startActivity(intent) }
+                null
+            } catch (_: ActivityNotFoundException) {
+                missing
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                e.message ?: "Could not share the note"
+            }
+            problem?.let { withContext(Dispatchers.Main) { onError(it) } }
+        }
     }
 
     // Fully expanded, scrolling if the screen is short: every action must be reachable.

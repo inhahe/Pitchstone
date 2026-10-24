@@ -55,7 +55,9 @@ class EditorWebView(
     /** Serves stored attachments by name (case and folders ignored, as notes may write them). */
     private class AttachmentPathHandler(private val store: AttachmentStore) : WebViewAssetLoader.PathHandler {
         override fun handle(path: String): WebResourceResponse {
-            val file = store.file(Uri.decode(path))
+            // Already decoded: WebViewAssetLoader passes Uri.getPath(). Decoding again would
+            // mangle a name with a `%` in it.
+            val file = store.file(path)
                 ?: return WebResourceResponse("text/plain", "utf-8", 404, "Not found", emptyMap(), null)
             val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase()) ?: "application/octet-stream"
             return WebResourceResponse(mime, null, FileInputStream(file))

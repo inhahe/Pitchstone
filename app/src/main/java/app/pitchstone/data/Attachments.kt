@@ -54,8 +54,8 @@ interface AttachmentDao {
 }
 
 /** An attachment larger than [AttachmentStore.MAX_BYTES] was refused. */
-class AttachmentTooLargeException(val bytes: Long) :
-    IllegalArgumentException("This file is ${bytes / 1_000_000} MB; an attachment can be at most ${AttachmentStore.MAX_BYTES / 1_000_000} MB")
+class AttachmentTooLargeException :
+    IllegalArgumentException("This file is larger than ${AttachmentStore.MAX_BYTES / 1_000_000} MB, the most an attachment can be")
 
 /**
  * The files stored with the notes, in [dir], one per attachment, named as notes mention them.
@@ -82,6 +82,7 @@ class AttachmentStore(
         /** The file name in a reference: no folder part (`attachments/pic.png` -> `pic.png`). */
         fun baseName(reference: String): String = reference.substringAfterLast('/').substringAfterLast('\\').trim()
 
+        private val LINK_BREAKING = Regex("[\\[\\]|#^]")
         private val WIKILINK_TARGET = Regex("\\[\\[([^\\[\\]\\n|#]+)")
         /** A link or image destination: `](<a b.png>` (spaces allowed) or `](a%20b.png`. */
         private val LINK_DESTINATION = Regex("\\]\\(\\s*(?:<([^>\\n]*)>|([^)\\s]+))")
@@ -93,7 +94,8 @@ class AttachmentStore(
          */
         fun mentionedNames(markdown: String): Set<String> {
             val out = HashSet<String>()
-            for (m in WIKILINK_TARGET.findAll(markdown)) out += baseName(m.groupValues[1]).lowercase()
+            // `![[pic.png\|200]]` in a table: the backslash belongs to the `|`, not the name.
+            for (m in WIKILINK_TARGET.findAll(markdown)) out += baseName(m.groupValues[1].removeSuffix("\\")).lowercase()
             for (m in LINK_DESTINATION.findAll(markdown)) {
                 val angled = m.groups[1]?.value
                 if (angled != null) {
@@ -149,7 +151,7 @@ class AttachmentStore(
         try {
             copyLimited(input, tmp)
             val ext = name.substringAfterLast('.', "")
-            val stem = Regex.escape(FileNames.safe(if (ext.isEmpty()) name else name.substringBeforeLast('.'), fallback = "Attachment"))
+            val stem = Regex.escape(safeStem(if (ext.isEmpty()) name else name.substringBeforeLast('.')))
             val variants = Regex(stem + "( \\d+)?" + (if (ext.isEmpty()) "" else "\\." + Regex.escape(ext)), RegexOption.IGNORE_CASE)
             val tmpDigest by lazy { digest(tmp) }
             val same = dir.listFiles()?.firstOrNull { f ->
@@ -190,7 +192,7 @@ class AttachmentStore(
                     val n = src.read(buffer)
                     if (n < 0) break
                     size += n
-                    if (size > MAX_BYTES) throw AttachmentTooLargeException(size)
+                    if (size > MAX_BYTES) throw AttachmentTooLargeException()
                     out.write(buffer, 0, n)
                 }
             }
@@ -211,10 +213,16 @@ class AttachmentStore(
         return md.digest().joinToString("") { "%02x".format(it) }
     }
 
+    /**
+     * [stem] as a file name that a wikilink can name too: valid on every file system
+     * ([FileNames.safe]), and without `[ ] | # ^`, which end or split a `![[name]]`.
+     */
+    private fun safeStem(stem: String) = FileNames.safe(stem.replace(LINK_BREAKING, " "), fallback = "Attachment")
+
     /** [preferred] as a valid file name not yet taken (ignoring case): "x.png", "x 1.png", "x 2.png"... */
     private suspend fun uniqueName(preferred: String): String {
         val ext = preferred.substringAfterLast('.', "").lowercase().filter { it.isLetterOrDigit() }.take(10)
-        val base = FileNames.safe(if (ext.isEmpty()) preferred else preferred.substringBeforeLast('.'), fallback = "Attachment")
+        val base = safeStem(if (ext.isEmpty()) preferred else preferred.substringBeforeLast('.'))
         fun candidate(n: Int) = (if (n == 0) base else "$base $n") + if (ext.isEmpty()) "" else ".$ext"
         var n = 0
         while (file(candidate(n)) != null || dao.get(candidate(n)) != null) n++

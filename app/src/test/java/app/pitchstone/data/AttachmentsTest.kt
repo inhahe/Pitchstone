@@ -116,6 +116,82 @@ class AttachmentsTest {
     }
 
     @Test
+    fun `a sized picture in a table cell is found and renamed by its name`() {
+        // The editor writes `|` in a table cell as `\|`, Obsidian too.
+        val md = "| a |\n| --- |\n| ![[pic.png\\|200]] |"
+        assertThat(AttachmentStore.mentionedNames(md)).contains("pic.png")
+        assertThat(LinkRewriter.renameAttachment(md, "pic.png", "pic 1.png")).isEqualTo("| a |\n| --- |\n| ![[pic 1.png\\|200]] |")
+    }
+
+    @Test
+    fun `pictures renamed together are each renamed once`() {
+        // image.png becomes "image 1.png", the name another picture had: that one must not follow.
+        val md = "![[image.png]] ![[image 1.png]] ![](image%201.png)"
+        val out = LinkRewriter.renameAttachments(md, mapOf("image.png" to "image 1.png", "image 1.png" to "image 1 1.png"))
+        assertThat(out).isEqualTo("![[image 1.png]] ![[image 1 1.png]] ![](image%201%201.png)")
+    }
+
+    @Test
+    fun `an imported picture renamed to another's name does not take that one's mentions`() = runBlocking<Unit> {
+        store.add(bytes("other"), "a.png")
+        val files = listOf(
+            // "a.png" is looked at first (HashSet order), and becomes "a 1.png", the next one's name.
+            ImportFile("N", "md", "", null, 30, { bytes("![[a.png]] ![[a 1.png]]") }),
+            ImportFile("a", "png", "", null, 1, { bytes("A") }),
+            ImportFile("a 1", "png", "", null, 1, { bytes("B") }),
+        )
+        Importer.import(repo, files, "", keepFolders = true, txtAsMarkdown = false, attachments = store)
+        assertThat(repo.allNotes().single().body).isEqualTo("![[a 1.png]] ![[a 1 1.png]]")
+        assertThat(store.file("a 1.png")!!.readText()).isEqualTo("A")
+        assertThat(store.file("a 1 1.png")!!.readText()).isEqualTo("B")
+    }
+
+    @Test
+    fun `stored names leave out what would break a wikilink`() = runBlocking<Unit> {
+        assertThat(store.add(bytes("a"), "Photo [1] #2 ^x|y.jpg")).isEqualTo("Photo 1 2 x y.jpg")
+        // And the same bytes under that name are found again.
+        assertThat(store.addOrReuse(bytes("a"), "Photo [1] #2 ^x|y.jpg")).isEqualTo("Photo 1 2 x y.jpg")
+    }
+
+    @Test
+    fun `a picture a version mentions percent-encoded is kept`() = runBlocking<Unit> {
+        val name = store.add(bytes("p"), "Pasted image 1.png")
+        val note = repo.create("N", "![](attachments/Pasted%20image%201.png)")
+        now += 1000
+        repo.save(note, "N", "") // only the version mentions it now
+        repo.collectAttachmentGarbage(store)
+        now += AttachmentStore.GRACE_MS + 1
+        repo.collectAttachmentGarbage(store)
+        assertThat(store.names()).containsExactly(name)
+    }
+
+    @Test
+    fun `a picture that cannot be stored is reported, and its note imported`() = runBlocking<Unit> {
+        val big = object : java.io.InputStream() {
+            var left = AttachmentStore.MAX_BYTES + 1
+            override fun read(): Int = if (left-- > 0) 0 else -1
+        }
+        val files = listOf(
+            ImportFile("Note", "md", "", null, 20, { bytes("![[huge.png]] text") }),
+            ImportFile("huge", "png", "", null, AttachmentStore.MAX_BYTES + 1, { big }),
+        )
+        val result = Importer.import(repo, files, "", keepFolders = true, txtAsMarkdown = false, attachments = store)
+        assertThat(result.imported).isEqualTo(1)
+        assertThat(result.failed).isEmpty()
+        assertThat(result.failedPictures.single().first).isEqualTo("huge.png")
+        assertThat(repo.allNotes().single().body).isEqualTo("![[huge.png]] text")
+    }
+
+    @Test
+    fun `an HTML page holds pictures up to a total, and names the rest`() = runBlocking<Unit> {
+        val size = (Html.INLINE_TOTAL_BYTES / 3 + 1).toInt()
+        for (n in 1..3) store.add(ByteArray(size).inputStream(), "p$n.png")
+        val page = Html.document("T", "![[p1.png]] ![[p2.png]] ![[p3.png]]", store::file)
+        assertThat(Regex("data:image/png").findAll(page).count()).isEqualTo(2)
+        assertThat(page).contains("[p3.png]")
+    }
+
+    @Test
     fun `importing a vault brings the pictures its notes show, once`() = runBlocking<Unit> {
         store.add(bytes("other"), "cat.png") // a different picture already has the name
         fun file(name: String, folder: String, content: String) = ImportFile(

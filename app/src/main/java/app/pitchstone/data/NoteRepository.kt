@@ -354,7 +354,14 @@ class NoteRepository(
             after = page.last().id
         }
         for (name in store.names()) {
-            if (name.lowercase() !in mentioned && dao.revisionsContain(escapeLike(name))) mentioned += name.lowercase()
+            if (name.lowercase() in mentioned) continue
+            // As written in a version: plain, or in a link destination, percent-encoded (`Pasted%20image.png`).
+            val spellings = linkedSetOf(
+                name,
+                name.replace(" ", "%20"),
+                java.net.URLEncoder.encode(name, "UTF-8").replace("+", "%20"),
+            )
+            if (spellings.any { dao.revisionsContain(escapeLike(it)) }) mentioned += name.lowercase()
         }
         store.collectGarbage(mentioned)
     }

@@ -253,17 +253,23 @@ name). The page loads them from `/attachments/<name>` on its own origin, which
 `views.ts` (`WikilinkView`, `ImageView`) draw image embeds and local image paths as pictures,
 sized by Obsidian's `|300` or `|300x200`, or as a box with the name when missing.
 
-In: a paste or drop of image files is posted to the app as `pasteImage` (base64); the photo
-picker (toolbar) goes through `ImagePrep` (HEIC becomes JPEG; with the setting on, photos over
-2560 pixels are scaled down, as JPEG, EXIF orientation applied). The app stores the picture
-(`add`: a unique name, "Pasted image <time>.png" for pastes) and answers with
-`insertWikilink {embed: true}`. Out: a markdown export adds the pictures its notes mention in
-`attachments/`; an HTML file holds them as data URLs; email bodies name them. Import stores
-the pictures an imported note mentions (`addOrReuse`: identical bytes are reused; a taken name
-gets a new one and the note's mentions follow, `LinkRewriter.renameAttachment`).
+In: a paste or drop of image files is posted to the app as `pasteImage` (base64). Pastes
+(`ImagePrep.fromBytes`) and the photo picker (`fromUri`) both go through `ImagePrep` (HEIC
+becomes JPEG; with the setting on, photos over 2560 pixels are scaled down, as JPEG, EXIF
+orientation applied). The app stores the picture (`add`: a unique name, "Pasted image
+<time>.png" for pastes, without the `[ ] | # ^` that would break a `![[name]]`) and answers
+with `insertWikilink {embed: true}`. Out: a markdown export adds the pictures its notes
+mention in `attachments/`; an HTML file holds them as data URLs (up to
+`Html.INLINE_TOTAL_BYTES`, 20 MB, in all; the share sheet builds it off the main thread);
+email bodies name them. Import stores the pictures an imported note mentions (`addOrReuse`:
+identical bytes are reused; a taken name gets a new one and the note's mentions follow, all at
+once with `LinkRewriter.renameAttachments`, so a new name that is another picture's old one is
+not renamed twice). A picture that cannot be stored is reported (`failedPictures`); its note
+is imported. Mentions are found by name, the table-safe `![[pic.png\|200]]` included.
 
 Clean-up (`collectAttachmentGarbage`, at start-up at most daily): names mentioned by any note
-(trash included) are read page by page; the rest are looked for in versions with a LIKE query;
+(trash included) are read page by page; the rest are looked for in versions with a LIKE query
+(as written, and percent-encoded as in a link destination);
 an attachment nothing mentions is marked and deleted 30 days later. Pictures go to device
 transfer, not cloud backup (25 MB limit). Version 2 of the database added the table (automatic
 migration, tested from the exported version 1 schema).
@@ -300,7 +306,8 @@ mention are files there.
 ignoring case, `NOCASE`), the note id (or, for pictures, the attachment name), the SHA-256 of
 the text (`SyncHash`; files are read as import reads them: BOM dropped, CRLF made LF), and the
 file's time and size. A side changed if its text's hash differs from the row's; a file is only
-read when its time or size moved, or it is new. Choosing another folder clears the table.
+read when its time or size moved, or it is new. Choosing another folder clears the table;
+choosing the same one again (after its permission was lost) keeps it.
 
 **Planning** (`SyncPlanner.plan`, pure, unit-tested case by case): pairs whose file is still
 there give Record / WriteFile / UpdateNote / MoveFile / Conflict (newer wins by file time
@@ -327,28 +334,35 @@ up again next time. Guards, each with a test that fails without it:
   since the listing is left for the next sync.
 - A file moves with its pair (`moveFile`), so a step failing after the move leaves the pair
   where the file is.
-- More than `TRASH_LIMIT` (5) notes losing their files at once, or any when the folder lists no
-  markdown file at all, are held back (`SyncReport.heldBack`) until the user picks
-  `GoneFiles.TRASH_NOTES` or `WRITE_AGAIN`.
+- More than `TRASH_LIMIT` (5) notes losing their files at once are held back
+  (`SyncReport.heldBack`) until the user picks `GoneFiles.TRASH_NOTES` or `WRITE_AGAIN`. A
+  folder that lists no markdown file while notes are paired (a card not there, a folder
+  moved) holds back everything, forgetting no pair, until the user picks.
 - Deletions are moves: files to the folder's `.trash` (numbered if the name is taken there),
   notes to the app's trash; the text a conflict does not keep becomes a version
-  (`forceRevision`, or `keepVersion` for the file's text).
-- A renamed file renames its note (`retitle`); links are updated afterwards with
-  `applyRename`, whose rewrites reach their files at the next sync.
+  (`forceRevision`, or `keepVersion` for the file's text, stored before the file is
+  overwritten).
+- A renamed file renames its note (`retitle`), unless its name still suits the note's title
+  (`fitsName`: a character files cannot hold, a clash's number), so moving a file between
+  folders never respells a title; links are updated afterwards with `applyRename`, whose
+  rewrites reach their files at the next sync. A file moved or made in a folder goes to the
+  app's folder of that file name (`appFolder`: "Q&A: misc" for `Q&A misc`).
 
 Pictures come after the notes: for each picture name a note mentions, one only in the folder
 is stored (`addOrReuse`), one only in the app is written to Obsidian's `attachmentFolderPath`
 (`.obsidian/app.json`: `/`, a folder, or `./…` beside the note), and one changed in the folder
 since its row replaces the app's copy (`AttachmentStore.replace`, an atomic move). Two
-different pictures meeting without a row are both left, and reported. Sync never deletes a
-picture.
+different pictures of one name are both left, reported, and remembered as a clash (the row's
+hash starts `clash:`), so a later change to the folder's copy never replaces the app's; the
+clash ends when the two are the same. Sync never deletes a picture.
 
 **Running** (`SyncManager`, in `AppContainer`): one sync at a time (a mutex). In process: a
 conflated request channel with a 1.5 s debounce, fed when the process comes to the front
 (`ProcessLifecycleOwner`) and when an editor session ends. Through WorkManager (`SyncWorker`):
 a periodic job every 15 minutes (battery not low) while a folder is set, and a one-off job 3
-s after the app leaves the front, which keeps the process alive for it. The last report and
-any error are kept in `SharedPreferences` "sync" for Settings (`SyncSection`), which also
+s after the app leaves the front, which keeps the process alive for it (appended after one
+running, which replacing would cancel). The last report, the last one that changed something,
+and any error are kept in `SharedPreferences` "sync" for Settings (`SyncSection`), which also
 shows the first-sync preview (`FolderSync.preview`: the plan as if nothing were paired), the
 held-back choice, and stop (permission released unless export remembers the same folder).
 
