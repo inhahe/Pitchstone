@@ -48,6 +48,12 @@ and stores each note as markdown.
   dashed underline. `[[Note#Heading]]` and `[[Note#^block-id]]` open the note at that heading
   or block, and `[[#Heading]]` jumps within the note.
 - **Find in note** (magnifier in the note): matches are highlighted, with next/previous.
+- **Pictures**: paste a picture into a note (long-press → Paste), or pick one with the picture
+  button in the toolbar. It is stored with your notes and written into the note the way
+  Obsidian does, `![[Pasted image 20261023211500.png]]`; `![[pic.png|300]]` shows it 300 pixels
+  wide. Tap a picture, then Open, to see it full size. Large photos are made at most 2560
+  pixels on their long side (Settings → Shrink large photos), and HEIC photos become JPEG.
+  A picture no note or version uses any more is deleted after 30 days.
 - The title of a new note has the keyboard; Enter moves on to the text.
 
 ## Organising
@@ -76,7 +82,9 @@ and stores each note as markdown.
 - **Trash**: deleted notes stay there for 30 days and can be restored. A note you empty by hand
   goes to the trash (with Undo) rather than disappearing; only a new note you never typed in is
   discarded.
-- Notes are included in Android's backup (Google One / device transfer).
+- Notes are included in Android's backup (Google One / device transfer). Pictures go along to
+  a new phone in a device transfer, but not into Google's cloud backup, whose 25 MB limit they
+  would soon exceed (and then the notes would not be backed up either): export or sync them.
 - Opening a note never changes it: only your edits are saved.
 
 ## Exporting
@@ -88,7 +96,8 @@ From the list (⋮ → Export these notes…, or select notes → export icon), 
   (lists keep their markers, tables are laid out in columns, links show their address). For
   `.txt` you can also keep the markdown symbols.
 - **Files**: one file per note, named after its title, with the note folders recreated as
-  subfolders (optional); or all notes in one file, each under its title.
+  subfolders (optional); or all notes in one file, each under its title. A Markdown export also
+  writes the pictures the notes show into an `attachments` folder.
 - **Options**: start each file with the title as a heading; add created/modified dates and tags
   as front matter (Markdown).
 - **If a file already exists**: keep both (adds a number), replace it, or skip that note. Two
@@ -102,7 +111,8 @@ The share icon in a note offers:
 
 - **Email**: the note's title as subject and the note as body, as **Formatted** text (headings,
   bold, lists, links and tables appear formatted in the email), **Markdown**, or **Plain text**.
-  Optionally the note is attached as a file (`.html`, `.md` or `.txt`).
+  Optionally the note is attached as a file (`.html`, `.md` or `.txt`); an `.html` file
+  holds the note's pictures, while an email names them in brackets.
 - **Share as text…** and **Share as file…** to any app.
 
 ## Importing
@@ -110,7 +120,9 @@ The share icon in a note offers:
 Drawer → Import notes…: import a whole folder (an Obsidian vault works; its hidden `.obsidian`
 folder is skipped) or chosen files. `.md` files are read as markdown; `.txt` files are kept as
 plain text by default (their symbols stay literal), or read as markdown if you choose. Folder
-structure can be kept. Importing the same files again does not create duplicates.
+structure can be kept. The pictures the imported notes show come along (a picture whose name
+is already taken by a different one gets a new name, and the note follows). Importing the same
+files again does not create duplicates.
 
 Text shared to Pitchstone from another app becomes a new note, and markdown files opened with
 Pitchstone are imported.

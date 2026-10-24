@@ -329,6 +329,10 @@ body[data-mode='read'] .ProseMirror {
 .ProseMirror .image.broken img {
   display: none;
 }
+.ProseMirror .image.ProseMirror-selectednode img {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 .ProseMirror .image.broken::before {
   content: '🖼 ' attr(data-alt);
   display: inline-block;

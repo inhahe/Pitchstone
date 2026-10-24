@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pitchstone.container
+import app.pitchstone.data.AttachmentStore
 import app.pitchstone.export.ImportFile
 import app.pitchstone.export.ImportResult
 import app.pitchstone.export.Importer
@@ -72,10 +73,11 @@ fun ImportDialog(currentFolder: String, folders: List<String>, onDismiss: () -> 
         container.appScope.launch {
             val outcome = runCatching {
                 val (files, unsupported) = withContext(Dispatchers.IO) { collect() }
-                phase = Phase.Running(0, files.size)
+                val notes = files.count(Importer::isNote)
+                phase = Phase.Running(0, notes)
                 val result = withContext(Dispatchers.IO) {
-                    Importer.import(container.repository, files, destination, keepFolders, txtAsMarkdown) { done ->
-                        phase = Phase.Running(done, files.size)
+                    Importer.import(container.repository, files, destination, keepFolders, txtAsMarkdown, container.attachments) { done ->
+                        phase = Phase.Running(done, notes)
                     }
                 }
                 result to unsupported
@@ -110,7 +112,7 @@ fun ImportDialog(currentFolder: String, folders: List<String>, onDismiss: () -> 
                 Column {
                     LinearProgressIndicator(progress = { if (p.total == 0) 0f else p.done / p.total.toFloat() }, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
-                    Text(if (p.total == 0) "Looking for notes…" else "${p.done} of ${p.total} files")
+                    Text(if (p.total == 0) "Looking for notes…" else "${p.done} of ${p.total} notes")
                 }
             },
             confirmButton = {},
@@ -121,9 +123,10 @@ fun ImportDialog(currentFolder: String, folders: List<String>, onDismiss: () -> 
             text = {
                 Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     val r = p.result
-                    Text("Imported ${r.imported} ${if (r.imported == 1) "note" else "notes"}.")
+                    Text("Imported ${r.imported} ${if (r.imported == 1) "note" else "notes"}" +
+                        if (r.pictures > 0) " and ${r.pictures} ${if (r.pictures == 1) "picture" else "pictures"}." else ".")
                     if (r.alreadyPresent > 0) Text("${r.alreadyPresent} were already here unchanged and were not imported again.")
-                    if (p.unsupported > 0) Text("${p.unsupported} chosen ${if (p.unsupported == 1) "file is" else "files are"} not .md or .txt and ${if (p.unsupported == 1) "was" else "were"} skipped.")
+                    if (p.unsupported > 0) Text("${p.unsupported} chosen ${if (p.unsupported == 1) "file is" else "files are"} not .md, .txt or a picture and ${if (p.unsupported == 1) "was" else "were"} skipped.")
                     if (r.skippedLarge.isNotEmpty()) {
                         Text("Too large to import (over ${Importer.MAX_BYTES / 1000} KB):", fontWeight = FontWeight.Medium)
                         r.skippedLarge.take(20).forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
@@ -185,7 +188,7 @@ fun ImportDialog(currentFolder: String, folders: List<String>, onDismiss: () -> 
     }
 }
 
-/** Importable files among picked [uris], and how many were not markdown or text. */
+/** Importable files among picked [uris] (notes and pictures), and how many were neither. */
 private fun filesFrom(resolver: ContentResolver, uris: List<Uri>): Pair<List<ImportFile>, Int> {
     val files = ArrayList<ImportFile>()
     var unsupported = 0
@@ -202,7 +205,7 @@ private fun filesFrom(resolver: ContentResolver, uris: List<Uri>): Pair<List<Imp
             }
         }
         val ext = name.substringAfterLast('.', "").lowercase()
-        if (ext !in Importer.EXTENSIONS) {
+        if (ext !in Importer.EXTENSIONS && !AttachmentStore.isImage(name)) {
             unsupported++
             continue
         }

@@ -11,6 +11,8 @@ export type OutMessage =
   | {type: 'openLink'; href: string}
   | {type: 'openNote'; target: string}
   | {type: 'openTag'; tag: string}
+  /** Images pasted or dropped: the app stores each and answers with insertWikilink (embed). */
+  | {type: 'pasteImage'; mime: string; name: string; data: string}
   | {type: 'editLink'; text: string; href: string; title: string | null; existing: boolean}
   | {type: 'editWikilink'; target: string; alias: string | null}
   | {type: 'modeChanged'; mode: Mode}

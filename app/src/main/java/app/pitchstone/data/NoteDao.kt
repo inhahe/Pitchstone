@@ -149,7 +149,15 @@ interface NoteDao {
     )
     suspend fun backlinks(targets: Collection<String>, exclude: Long): List<NoteSummary>
 
+    /** Notes' bodies in id order, from after [after], [limit] at a time (trashed ones too). */
+    @Query("SELECT id, body FROM notes WHERE id > :after ORDER BY id LIMIT :limit")
+    suspend fun bodiesAfter(after: Long, limit: Int): List<IdBody>
+
     // ---- Revisions ------------------------------------------------------------------------
+
+    /** Whether any earlier version's text contains [pattern] (a LIKE pattern, `\` escaping; see escapeLike). */
+    @Query("SELECT EXISTS(SELECT 1 FROM revisions WHERE body LIKE '%' || :pattern || '%' ESCAPE '\\')")
+    suspend fun revisionsContain(pattern: String): Boolean
 
     @Insert
     suspend fun insertRevision(revision: RevisionEntity): Long
@@ -199,3 +207,5 @@ data class NoteRef(
     val folder: String,
     val updatedAt: Long,
 )
+
+data class IdBody(val id: Long, val body: String)

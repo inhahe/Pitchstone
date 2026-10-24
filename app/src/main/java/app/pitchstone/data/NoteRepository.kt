@@ -319,6 +319,26 @@ class NoteRepository(
     }
 
     /**
+     * Lets [store] drop the attachments no note (in the trash too) and no earlier version has
+     * mentioned for a while ([AttachmentStore.collectGarbage]). Notes are read page by page;
+     * versions, of which there are many more, are asked only about the names no note mentions.
+     */
+    suspend fun collectAttachmentGarbage(store: AttachmentStore) {
+        val mentioned = HashSet<String>()
+        var after = 0L
+        while (true) {
+            val page = dao.bodiesAfter(after, 200)
+            if (page.isEmpty()) break
+            for (note in page) mentioned += AttachmentStore.mentionedNames(note.body)
+            after = page.last().id
+        }
+        for (name in store.names()) {
+            if (name.lowercase() !in mentioned && dao.revisionsContain(escapeLike(name))) mentioned += name.lowercase()
+        }
+        store.collectGarbage(mentioned)
+    }
+
+    /**
      * Completes every rename still pending (after the app was stopped mid-way, say). One that
      * fails is skipped, and stays pending; returns how many notes changed.
      */

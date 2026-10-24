@@ -47,6 +47,8 @@ export async function open(
 ) {
   await page.addInitScript(asChrome90)
   await page.route(`${ORIGIN}/**`, (route) => {
+    // Pictures are a test's own to serve (see servePictures).
+    if (new URL(route.request().url()).pathname.startsWith('/attachments/')) return route.fallback()
     const file = join(DIST, new URL(route.request().url()).pathname)
     return existsSync(file) ? route.fulfill({path: file}) : route.fulfill({status: 404})
   })
@@ -112,4 +114,19 @@ export async function typeComposed(page: Page, text: string) {
     if (composing) await cdp.send('Input.insertText', {text: composing})
   }
   await cdp.detach()
+}
+
+/** A 1x1 PNG. */
+export const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+
+/**
+ * Serves the stored pictures named in [names] (ignoring case, as the app does) at
+ * /attachments/<name>, and 404 for any other. Call before open().
+ */
+export async function servePictures(page: Page, names: string[]) {
+  const known = new Set(names.map((n) => n.toLowerCase()))
+  await page.route(`${ORIGIN}/attachments/**`, (route) => {
+    const name = decodeURIComponent(new URL(route.request().url()).pathname.slice('/attachments/'.length))
+    return known.has(name.toLowerCase()) ? route.fulfill({body: PNG, contentType: 'image/png'}) : route.fulfill({status: 404})
+  })
 }

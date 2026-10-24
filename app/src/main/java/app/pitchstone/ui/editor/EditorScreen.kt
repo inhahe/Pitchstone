@@ -3,7 +3,12 @@ package app.pitchstone.ui.editor
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
+import android.webkit.MimeTypeMap
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -124,6 +129,22 @@ fun EditorScreen(
         }
     }
 
+    /** Shows a stored attachment in another app (a gallery, a PDF viewer). */
+    fun openFile(file: java.io.File) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase()) ?: "*/*"
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        } catch (_: ActivityNotFoundException) {
+            message("No app can show ${file.name}")
+        }
+    }
+
+    // The photo picker: no permission needed, and only the picked picture is shared.
+    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) vm.insertImage(uri)
+    }
+
     LaunchedEffect(vm) {
         vm.events.collect { event ->
             when (event) {
@@ -131,6 +152,7 @@ fun EditorScreen(
                 is EditorEvent.OpenNote -> onOpenNote(event.id, event.anchor)
                 is EditorEvent.ShowTag -> onShowTag(event.tag)
                 is EditorEvent.Message -> message(event.text)
+                is EditorEvent.OpenFile -> openFile(event.file)
                 EditorEvent.Close -> onBack()
             }
         }
@@ -270,6 +292,7 @@ fun EditorScreen(
                     state = state.toolbar,
                     onCommand = { name: String, args: JsonObject? -> vm.command(name, args) },
                     onWikilink = vm::requestWikilink,
+                    onImage = { pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 )
             }
         }

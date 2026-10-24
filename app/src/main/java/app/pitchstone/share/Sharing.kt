@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.core.text.HtmlCompat
+import app.pitchstone.container
 import app.pitchstone.data.ShareFormat
 import app.pitchstone.export.FileNames
 import app.pitchstone.markdown.Html
@@ -116,7 +117,7 @@ object Sharing {
         val sub = File(dir, System.nanoTime().toString()).apply { mkdirs() }
         val name = FileNames.safe(title)
         val (fileName, content) = when (format) {
-            ShareFormat.HTML -> "$name.html" to Html.document(title, markdown)
+            ShareFormat.HTML -> "$name.html" to Html.document(title, markdown, context.container.attachments::file)
             ShareFormat.MARKDOWN -> "$name.md" to Markdown.normalizeNewlines(markdown)
             ShareFormat.PLAIN -> "$name.txt" to PlainText.render(markdown) + "\n"
         }

@@ -1,5 +1,7 @@
 package app.pitchstone.ui.editor
 
+import android.net.Uri
+import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -104,6 +106,8 @@ sealed interface EditorEvent {
     data class OpenNote(val id: Long, val anchor: String? = null) : EditorEvent
     data class ShowTag(val tag: String) : EditorEvent
     data class Message(val text: String) : EditorEvent
+    /** Show a stored attachment (an image) in an app that views it. */
+    data class OpenFile(val file: java.io.File) : EditorEvent
     /** Leave the editor (the note was closed, deleted or does not exist). */
     data object Close : EditorEvent
 }
@@ -343,6 +347,11 @@ class EditorViewModel(
             "openLink" -> str("href")?.let { href -> flushThen { _events.send(EditorEvent.OpenUrl(href)) } }
             "openNote" -> str("target")?.let { openWikilink(it) }
             "openTag" -> str("tag")?.let { leave(Exit.Tag(it)) }
+            "pasteImage" -> {
+                val data = str("data") ?: return
+                val mime = str("mime") ?: "image/png"
+                addImage { container.attachments.add(Base64.decode(data, Base64.DEFAULT).inputStream(), ImagePrep.pastedName(mime)) }
+            }
             "editLink" -> _state.update {
                 it.copy(
                     linkDialog = LinkDialogState(
@@ -575,9 +584,10 @@ class EditorViewModel(
         val anchor = target.substringAfter('#', "").trim().ifEmpty { null }
         val name = WikiLinks.noteName(target)
         val id = repo.resolveLink(target, _state.value.folder)?.id ?: run {
-            // A link to a file (an image, a PDF) is not a note: do not make one up.
+            // A link to a file (an image, a PDF) is not a note: show the file if it is stored.
             if (WikiLinks.isAttachment(name)) {
-                _events.send(EditorEvent.Message("“$name” is a file, not a note; attachments are not supported"))
+                val file = container.attachments.file(name)
+                _events.send(if (file != null) EditorEvent.OpenFile(file) else EditorEvent.Message("“$name” is not stored with your notes"))
                 return
             }
             val folder = if ('/' in name) FolderPaths.normalize(name.substringBeforeLast('/')) else _state.value.folder
@@ -589,6 +599,29 @@ class EditorViewModel(
             if (anchor != null) port?.call("scrollToAnchor", anchor)
         } else {
             _events.send(EditorEvent.OpenNote(id, anchor))
+        }
+    }
+
+    /** Puts the picture picked at [uri] into the note, at the cursor. */
+    fun insertImage(uri: Uri) = addImage {
+        val prepared = ImagePrep.fromUri(container.appContext.contentResolver, uri, settings.value.shrinkLargePhotos)
+        container.attachments.add(prepared.open(), prepared.name)
+    }
+
+    /** Stores an image ([store] returns its name) and embeds it at the cursor: `![[name]]`. */
+    private fun addImage(store: suspend () -> String) {
+        viewModelScope.launch {
+            try {
+                val name = withContext(Dispatchers.IO) { store() }
+                command("insertWikilink", buildJsonObject {
+                    put("target", name)
+                    put("embed", true)
+                })
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w(TAG, "Adding an image failed", e)
+                _events.send(EditorEvent.Message("Could not add the picture: ${e.message ?: e.javaClass.simpleName}"))
+            }
         }
     }
 

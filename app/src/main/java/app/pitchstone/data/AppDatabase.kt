@@ -1,17 +1,29 @@
 package app.pitchstone.data
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
+/**
+ * The notes database. Each version's schema is exported to app/schemas; versions after 1 are
+ * reached by automatic migrations, tested in MigrationTest.
+ *
+ * 2: attachments (images stored with notes).
+ */
 @Database(
-    entities = [NoteEntity::class, FolderEntity::class, NoteTagEntity::class, NoteLinkEntity::class, RevisionEntity::class],
-    version = 1,
+    entities = [
+        NoteEntity::class, FolderEntity::class, NoteTagEntity::class, NoteLinkEntity::class, RevisionEntity::class,
+        AttachmentEntity::class,
+    ],
+    version = 2,
     exportSchema = true,
+    autoMigrations = [AutoMigration(from = 1, to = 2)],
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
+    abstract fun attachments(): AttachmentDao
 
     companion object {
         const val FILE_NAME = "pitchstone.db"

@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.util.Log
 import app.pitchstone.data.AppDatabase
+import app.pitchstone.data.AttachmentStore
 import app.pitchstone.data.NoteRepository
 import app.pitchstone.data.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
@@ -12,6 +13,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import java.io.File
 
 /** What a screen can ask the note list to show when it navigates back to it. */
 sealed interface ListRequest {
@@ -20,9 +22,16 @@ sealed interface ListRequest {
 
 /** The app's long-lived objects, created once per process. */
 class AppContainer(context: Context) {
+    /** The application context, for reading what other apps hand over (content URIs). */
+    val appContext: Context = context.applicationContext
     val database: AppDatabase = AppDatabase.open(context)
     val repository = NoteRepository(database)
     val settings = SettingsRepository(context)
+
+    /** Images stored with the notes (files/attachments). */
+    val attachments = AttachmentStore(File(context.filesDir, "attachments"), database)
+
+    private val maintenance = context.getSharedPreferences("maintenance", Context.MODE_PRIVATE)
 
     /** Work that must finish even if the screen that started it goes away (saving). */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -46,11 +55,19 @@ class AppContainer(context: Context) {
             // Renames the app was stopped in the middle of (see NoteEntity.linkedTitle).
             runCatching { repository.applyPendingRenames(settings.current().updateLinksOnRename) }
                 .onFailure { Log.w(TAG, "Completing renames failed", it) }
+            // At most daily: it reads every note.
+            val now = System.currentTimeMillis()
+            if (now - maintenance.getLong(LAST_ATTACHMENT_GC, 0) > 24 * 60 * 60 * 1000L) {
+                runCatching { repository.collectAttachmentGarbage(attachments) }
+                    .onSuccess { maintenance.edit().putLong(LAST_ATTACHMENT_GC, now).apply() }
+                    .onFailure { Log.w(TAG, "Cleaning up attachments failed", it) }
+            }
         }
     }
 
     private companion object {
         const val TAG = "Pitchstone"
+        const val LAST_ATTACHMENT_GC = "lastAttachmentGc"
     }
 }
 

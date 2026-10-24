@@ -45,7 +45,7 @@ import {structurePlugin, toolbarPlugin} from './plugins'
 import {enterShortcut, markdownInputRules} from './rules'
 import {applySettings, type EditorSettings, settings} from './settings'
 import {suggestPlugin} from './suggest'
-import {ImageView, ListItemView} from './views'
+import {ImageView, ListItemView, WikilinkView} from './views'
 import type {SerializeRequest, SerializeResponse} from '../worker'
 
 const {nodes, marks} = schema
@@ -83,6 +83,29 @@ export interface FlushResult {
 }
 
 const SAVE_DELAY_MS = 400
+
+/** The image files in pasted or dropped data. */
+function imageFiles(data: DataTransfer | null): File[] {
+  return Array.from(data?.files ?? []).filter((f) => f.type.startsWith('image/'))
+}
+
+function hasImages(data: DataTransfer | null): boolean {
+  return imageFiles(data).length > 0
+}
+
+/** Sends the images in `data` to the app (as base64); whether there were any. */
+function sendImages(data: DataTransfer | null): boolean {
+  const files = imageFiles(data)
+  for (const file of files) {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const url = String(reader.result)
+      post({type: 'pasteImage', mime: file.type, name: file.name, data: url.slice(url.indexOf(',') + 1)})
+    }
+    reader.readAsDataURL(file)
+  }
+  return files.length > 0
+}
 
 export class PitchstoneEditor {
   readonly view: EditorView
@@ -126,6 +149,7 @@ export class PitchstoneEditor {
       nodeViews: {
         list_item: (node, view, getPos) => new ListItemView(node, view, getPos),
         image: (node) => new ImageView(node),
+        wikilink: (node) => new WikilinkView(node),
       },
       attributes: () => ({
         spellcheck: String(settings.spellcheck),
@@ -141,6 +165,14 @@ export class PitchstoneEditor {
         if (!target) return false
         openTarget(target)
         return true
+      },
+      // Pasted or dropped images go to the app, which stores them and inserts ![[name]].
+      handlePaste: (_view, event) => this.mode === 'edit' && sendImages(event.clipboardData),
+      handleDrop: (view, event) => {
+        if (this.mode !== 'edit' || !hasImages((event as DragEvent).dataTransfer)) return false
+        const at = view.posAtCoords({left: (event as DragEvent).clientX, top: (event as DragEvent).clientY})
+        if (at) view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(at.pos))))
+        return sendImages((event as DragEvent).dataTransfer)
       },
       clipboardTextSerializer: (slice) => sliceToText(slice),
       clipboardTextParser: (text, _$context, plain) => (settings.markdownShortcuts && !plain ? markdownSlice(text) : (null as unknown as Slice)),

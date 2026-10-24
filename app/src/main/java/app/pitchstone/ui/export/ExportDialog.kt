@@ -115,7 +115,7 @@ fun ExportDialog(source: ExportSource, onDismiss: () -> Unit) {
         container.appScope.launch {
             val outcome = runCatching {
                 val notes = source.load()
-                val files = withContext(Dispatchers.Default) { ExportPlanner.plan(notes, request) }
+                val files = withContext(Dispatchers.Default) { ExportPlanner.plan(notes, request, attachments = container.attachments::file) }
                 withContext(Dispatchers.IO) {
                     val root = SafDir.root(context.contentResolver, tree)
                     val result = ExportWriter.write(root, files, policy) { done ->

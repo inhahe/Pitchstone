@@ -1,9 +1,12 @@
-// Node views: list items with a tappable checkbox, and images that degrade to their alt text.
+// Node views: list items with a tappable checkbox, images that degrade to their alt text, and
+// note links, which show the picture when they embed an image (`![[pic.png]]`).
 
-import type {Node} from 'prosemirror-model'
+import {DOMSerializer, type Node} from 'prosemirror-model'
 import type {EditorView, NodeView, ViewMutationRecord} from 'prosemirror-view'
 import {schema} from '../schema'
+import {attachmentUrl, decodeSrc, embedSize, isAttachmentSrc, isImageName} from './attachments'
 import {toggleTaskAt} from './commands'
+import {wikilinkNote} from './links'
 
 /**
  * A list item. Task items get a checkbox before their content; it toggles on tap, in reading
@@ -68,23 +71,54 @@ export class ListItemView implements NodeView {
   }
 }
 
-/** An image; when it cannot load, a box with its alt text stands in. */
+/**
+ * A picture; when it cannot load, a box with its name stands in. A `src` that is a path, not an
+ * address, names a stored attachment (attachments.ts).
+ */
+function picture(src: string, alt: string, fallback: string): {wrap: HTMLElement; img: HTMLImageElement} {
+  const wrap = document.createElement('span')
+  wrap.className = 'image'
+  const img = document.createElement('img')
+  img.src = src
+  img.alt = alt
+  img.loading = 'lazy'
+  img.addEventListener('error', () => {
+    wrap.classList.add('broken')
+    wrap.dataset.alt = fallback
+  })
+  wrap.append(img)
+  return {wrap, img}
+}
+
+/** A markdown image, `![alt](src "title")`. */
 export class ImageView implements NodeView {
   dom: HTMLElement
 
   constructor(node: Node) {
-    const wrap = document.createElement('span')
-    wrap.className = 'image'
-    const img = document.createElement('img')
-    img.src = node.attrs.src
-    img.alt = node.attrs.alt
+    const src: string = node.attrs.src
+    const {wrap, img} = picture(isAttachmentSrc(src) ? attachmentUrl(decodeSrc(src)) : src, node.attrs.alt, node.attrs.alt || src)
     if (node.attrs.title) img.title = node.attrs.title
-    img.loading = 'lazy'
-    img.addEventListener('error', () => {
-      wrap.classList.add('broken')
-      wrap.dataset.alt = node.attrs.alt || node.attrs.src
-    })
-    wrap.append(img)
     this.dom = wrap
+  }
+}
+
+/** A note link: as the schema draws it, or, embedding an image, the picture (sized `|300`). */
+export class WikilinkView implements NodeView {
+  dom: HTMLElement
+
+  constructor(node: Node) {
+    const name = wikilinkNote(node.attrs.target)
+    if (node.attrs.embed && isImageName(name)) {
+      const {wrap, img} = picture(attachmentUrl(name), name, name)
+      wrap.classList.add('embed-image')
+      const size = embedSize(node.attrs.alias)
+      if (size) {
+        img.width = size.width
+        if (size.height) img.height = size.height
+      }
+      this.dom = wrap
+    } else {
+      this.dom = DOMSerializer.renderSpec(document, node.type.spec.toDOM!(node)).dom as HTMLElement
+    }
   }
 }

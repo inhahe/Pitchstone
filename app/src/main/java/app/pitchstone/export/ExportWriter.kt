@@ -45,25 +45,24 @@ object ExportWriter {
                 val taken = entries.keys + mine
                 val mime = mimeTypeFor(file.extension)
                 val clash = entries[wanted.lowercase()]
-                val bytes = file.content.toByteArray(Charsets.UTF_8)
                 when {
                     wanted.lowercase() in mine || (clash != null && clash.isDirectory) ||
                         (clash != null && policy == ConflictPolicy.KEEP_BOTH) -> {
                         val name = FileNames.unique(file.baseName, file.extension, taken)
                         val (actual, out) = dir.createFile(name, mime)
-                        out.use { it.write(bytes) }
+                        out.use { file.writeTo(it) }
                         mine += actual.lowercase()
                         written += (file.folder + actual).joinToString("/")
                     }
                     clash != null && policy == ConflictPolicy.SKIP -> skipped += display
                     clash != null -> {
-                        dir.overwrite(clash, mime).use { it.write(bytes) }
+                        dir.overwrite(clash, mime).use { file.writeTo(it) }
                         mine += clash.name.lowercase()
                         written += display
                     }
                     else -> {
                         val (actual, out) = dir.createFile(wanted, mime)
-                        out.use { it.write(bytes) }
+                        out.use { file.writeTo(it) }
                         mine += actual.lowercase()
                         written += (file.folder + actual).joinToString("/")
                     }
@@ -75,4 +74,10 @@ object ExportWriter {
         }
         return ExportResult(written, skipped, failed)
     }
+}
+
+/** Writes the file's text, or copies what its source reads. */
+private fun PlannedFile.writeTo(out: java.io.OutputStream) {
+    val read = source
+    if (read != null) read().use { it.copyTo(out) } else out.write(content.toByteArray(Charsets.UTF_8))
 }

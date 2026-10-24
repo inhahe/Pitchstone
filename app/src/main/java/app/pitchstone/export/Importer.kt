@@ -1,11 +1,13 @@
 package app.pitchstone.export
 
+import app.pitchstone.data.AttachmentStore
 import app.pitchstone.data.FolderPaths
 import app.pitchstone.data.NoteRepository
 import app.pitchstone.data.NoteTooLargeException
+import app.pitchstone.markdown.LinkRewriter
 import java.io.InputStream
 
-/** A file that can be imported as a note. */
+/** A file that can be imported: a note, or a picture notes show. */
 data class ImportFile(
     /** The note's title: the file name without its extension. */
     val title: String,
@@ -22,6 +24,8 @@ data class ImportResult(
     val alreadyPresent: Int,
     val failed: List<Pair<String, String>>,
     val skippedLarge: List<String>,
+    /** Pictures the imported notes show, stored with them (new ones only). */
+    val pictures: Int = 0,
 )
 
 object Importer {
@@ -29,9 +33,13 @@ object Importer {
     /** The largest file imported: a note can hold no more (NoteRepository.MAX_NOTE_BYTES). */
     const val MAX_BYTES = NoteRepository.MAX_NOTE_BYTES.toLong()
 
+    /** Whether [file] becomes a note (rather than a picture a note shows). */
+    fun isNote(file: ImportFile): Boolean = file.extension in EXTENSIONS
+
     /**
-     * The importable files in [dir] and its subfolders. Hidden folders (".obsidian", ".git",
-     * ".trash") are skipped, as is anything that is not markdown or text.
+     * The importable files in [dir] and its subfolders: notes, and pictures (which are stored
+     * only if an imported note shows them). Hidden folders (".obsidian", ".git", ".trash") are
+     * skipped, as is anything else.
      */
     fun collect(dir: DocumentDir, folder: String = ""): List<ImportFile> {
         val out = ArrayList<ImportFile>()
@@ -42,7 +50,7 @@ object Importer {
                 continue
             }
             val ext = entry.name.substringAfterLast('.', "").lowercase()
-            if (ext !in EXTENSIONS) continue
+            if (ext !in EXTENSIONS && ext !in AttachmentStore.IMAGE_EXTENSIONS) continue
             out += ImportFile(
                 title = entry.name.substringBeforeLast('.'),
                 extension = ext,
@@ -108,9 +116,12 @@ object Importer {
     private const val ALWAYS_ESCAPED = "\\`*_[]<>|~=^&"
 
     /**
-     * Imports [files] into [targetFolder]. A file whose note already exists unchanged (same
-     * title, folder and content) is not imported again, so importing twice is harmless.
-     * Plain-text files become notes that show their text literally unless [txtAsMarkdown].
+     * Imports the notes among [files] into [targetFolder], with the pictures among them that
+     * they show, stored in [attachments] (a picture whose name is taken by another one is stored
+     * under a new name, and the note's mentions follow). A note that already exists unchanged
+     * (same title, folder and content) is not imported again, and a picture already stored is
+     * not stored twice, so importing twice is harmless. Plain-text files become notes that show
+     * their text literally unless [txtAsMarkdown]. [progress] gets the number of notes done.
      */
     suspend fun import(
         repo: NoteRepository,
@@ -118,6 +129,7 @@ object Importer {
         targetFolder: String,
         keepFolders: Boolean,
         txtAsMarkdown: Boolean,
+        attachments: AttachmentStore? = null,
         progress: (Int) -> Unit = {},
     ): ImportResult {
         // Folders compare ignoring case: a note is stored under an existing folder's spelling.
@@ -126,7 +138,11 @@ object Importer {
         var present = 0
         val failed = ArrayList<Pair<String, String>>()
         val large = ArrayList<String>()
-        files.forEachIndexed { i, f ->
+        val pictures = files.filterNot(::isNote).groupBy { "${it.title}.${it.extension}".lowercase() }
+        val storedAs = HashMap<ImportFile, String>()
+        var newPictures = 0
+        val before = attachments?.names()?.map { it.lowercase() }?.toSet().orEmpty()
+        files.filter(::isNote).forEachIndexed { i, f ->
             val folder = FolderPaths.normalize(if (keepFolders) FolderPaths.child(targetFolder, f.folder) else targetFolder)
             val label = if (f.folder.isEmpty()) "${f.title}.${f.extension}" else "${f.folder}/${f.title}.${f.extension}"
             try {
@@ -134,7 +150,21 @@ object Importer {
                     large += label
                 } else {
                     val text = readText(f.open())
-                    val body = if (f.extension == "txt" && !txtAsMarkdown) plainTextToMarkdown(text) else text
+                    var body = if (f.extension == "txt" && !txtAsMarkdown) plainTextToMarkdown(text) else text
+                    if (attachments != null) {
+                        for (mention in AttachmentStore.mentionedNames(body)) {
+                            // The picture nearest the note: in its folder, else the first found.
+                            val candidates = pictures[mention] ?: continue
+                            val picture = candidates.firstOrNull { it.folder == f.folder } ?: candidates.first()
+                            val fileName = "${picture.title}.${picture.extension}"
+                            val name = storedAs.getOrPut(picture) {
+                                val stored = attachments.addOrReuse(picture.open(), fileName)
+                                if (stored.lowercase() !in before) newPictures++
+                                stored
+                            }
+                            if (!name.equals(fileName, ignoreCase = true)) body = LinkRewriter.renameAttachment(body, fileName, name)
+                        }
+                    }
                     if (Triple(f.title, folder.lowercase(), body) in existing) {
                         present++
                     } else {
@@ -150,6 +180,6 @@ object Importer {
             }
             progress(i + 1)
         }
-        return ImportResult(imported, present, failed, large)
+        return ImportResult(imported, present, failed, large, newPictures)
     }
 }

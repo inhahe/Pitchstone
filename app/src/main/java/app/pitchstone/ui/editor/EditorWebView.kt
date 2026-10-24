@@ -14,7 +14,11 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
+import android.webkit.MimeTypeMap
 import app.pitchstone.BuildConfig
+import app.pitchstone.container
+import app.pitchstone.data.AttachmentStore
+import java.io.FileInputStream
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -44,7 +48,19 @@ class EditorWebView(
     private val main = Handler(Looper.getMainLooper())
     private val assets = WebViewAssetLoader.Builder()
         .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
+        // The images notes show: /attachments/<name> (editor/src/editor/attachments.ts).
+        .addPathHandler("/attachments/", AttachmentPathHandler(context.container.attachments))
         .build()
+
+    /** Serves stored attachments by name (case and folders ignored, as notes may write them). */
+    private class AttachmentPathHandler(private val store: AttachmentStore) : WebViewAssetLoader.PathHandler {
+        override fun handle(path: String): WebResourceResponse {
+            val file = store.file(Uri.decode(path))
+                ?: return WebResourceResponse("text/plain", "utf-8", 404, "Not found", emptyMap(), null)
+            val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase()) ?: "application/octet-stream"
+            return WebResourceResponse(mime, null, FileInputStream(file))
+        }
+    }
 
     /** Called by the page (on a background thread). */
     inner class Bridge {

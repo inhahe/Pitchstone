@@ -1,7 +1,12 @@
 package app.pitchstone.markdown
 
 import org.commonmark.ext.task.list.items.TaskListItemMarker
+import app.pitchstone.data.AttachmentStore
+import org.commonmark.node.Image
 import org.commonmark.node.ListItem
+import org.commonmark.node.Text
+import java.io.File
+import java.util.Base64
 import org.commonmark.node.Node
 import org.commonmark.renderer.NodeRenderer
 import org.commonmark.renderer.html.AttributeProvider
@@ -27,10 +32,10 @@ object Html {
         "hr" to "border:none;border-top:1px solid #ccc",
     )
 
-    private fun renderer(email: Boolean): HtmlRenderer {
+    private fun renderer(email: Boolean, attachments: (String) -> File? = { null }): HtmlRenderer {
         val builder = HtmlRenderer.builder()
             // Registered before the extensions, so these win over theirs for the same nodes.
-            .nodeRendererFactory { context -> CustomRenderer(context, email) }
+            .nodeRendererFactory { context -> CustomRenderer(context, email, attachments) }
             .extensions(Markdown.extensions)
             .softbreak("<br />\n")
             .escapeHtml(true)
@@ -55,14 +60,20 @@ object Html {
         node is ListItem && (node.firstChild is TaskListItemMarker || node.firstChild?.firstChild is TaskListItemMarker)
 
     private val emailRenderer by lazy { renderer(email = true) }
-    private val documentRenderer by lazy { renderer(email = false) }
 
-    /** The note body as an HTML fragment with inline styles, for an email. */
+    /**
+     * The note body as an HTML fragment with inline styles, for an email. Pictures stored with
+     * the note show as their names: mail apps drop pictures written into the HTML itself.
+     */
     fun emailBody(markdown: String): String = emailRenderer.render(Markdown.parse(markdown).document)
 
-    /** A standalone HTML page for a note, with its title as the heading. */
-    fun document(title: String, markdown: String): String {
-        val body = documentRenderer.render(Markdown.parse(markdown).document)
+    /**
+     * A standalone HTML page for a note, with its title as the heading. The pictures it shows,
+     * found by [attachments] (AttachmentStore.file), are written into the page (data: URLs), so
+     * the one file holds everything.
+     */
+    fun document(title: String, markdown: String, attachments: (String) -> File? = { null }): String {
+        val body = renderer(email = false, attachments).render(Markdown.parse(markdown).document)
         val heading = if (title.isNotBlank()) "<h1>${escape(title)}</h1>\n" else ""
         return """<!doctype html>
 <html>
@@ -102,19 +113,47 @@ $heading$body</body>
         }
     }
 
-    private class CustomRenderer(private val context: HtmlNodeRendererContext, private val email: Boolean) : NodeRenderer {
+    /** Pictures larger than this are not written into a page; their name stands in. */
+    private const val INLINE_MAX_BYTES = 10_000_000L
+
+    private class CustomRenderer(
+        private val context: HtmlNodeRendererContext,
+        private val email: Boolean,
+        private val attachments: (String) -> File?,
+    ) : NodeRenderer {
         private val html = context.writer
 
         override fun getNodeTypes(): Set<Class<out Node>> =
-            setOf(WikiLink::class.java, Highlight::class.java, TaskListItemMarker::class.java)
+            setOf(WikiLink::class.java, Highlight::class.java, TaskListItemMarker::class.java, Image::class.java)
 
         override fun render(node: Node) {
             when (node) {
                 is WikiLink -> {
+                    if (node.link.embed && AttachmentStore.isImage(node.link.noteName)) {
+                        picture(node.link.noteName, AttachmentStore.baseName(node.link.noteName))
+                        return
+                    }
                     val attrs = if (email) mapOf("style" to "color:#6750a4;font-weight:500") else mapOf("class" to "wikilink")
                     html.tag("span", attrs)
                     html.text(node.link.label)
                     html.tag("/span")
+                }
+                is Image -> {
+                    val dest = node.destination
+                    val alt = altText(node)
+                    when {
+                        Regex("^https?:", RegexOption.IGNORE_CASE).containsMatchIn(dest) -> {
+                            val attrs = linkedMapOf("src" to dest, "alt" to alt)
+                            node.title?.let { attrs["title"] = it }
+                            html.tag("img", context.extendAttributes(node, "img", attrs), true)
+                        }
+                        // A path: a picture stored with the notes, by its file name.
+                        !Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(dest) && dest.isNotBlank() -> {
+                            val path = runCatching { java.net.URLDecoder.decode(dest.replace("+", "%2B"), "UTF-8") }.getOrDefault(dest)
+                            picture(path, alt.ifBlank { AttachmentStore.baseName(path) })
+                        }
+                        else -> html.text(alt)
+                    }
                 }
                 is Highlight -> {
                     html.tag("mark", context.extendAttributes(node, "mark", emptyMap()))
@@ -131,6 +170,45 @@ $heading$body</body>
                     html.text(if (node.isChecked) "☑ " else "☐ ")
                 }
             }
+        }
+
+        /** A stored picture: in a page, the picture itself; in an email, or if missing, its name. */
+        private fun picture(reference: String, alt: String) {
+            val file = attachments(reference)
+            if (!email && file != null && file.length() <= INLINE_MAX_BYTES) {
+                val mime = MimeTypes.forExtension(file.extension)
+                val data = Base64.getEncoder().encodeToString(file.readBytes())
+                html.tag("img", mapOf("src" to "data:$mime;base64,$data", "alt" to alt), true)
+            } else {
+                html.tag("span", mapOf("style" to "color:#666"))
+                html.text("[$alt]")
+                html.tag("/span")
+            }
+        }
+
+        private fun altText(node: Node): String = buildString {
+            fun walk(n: Node?) {
+                var c = n?.firstChild
+                while (c != null) {
+                    if (c is Text) append(c.literal) else walk(c)
+                    c = c.next
+                }
+            }
+            walk(node)
+        }
+    }
+
+    /** Media types of the picture formats notes show. */
+    private object MimeTypes {
+        fun forExtension(ext: String): String = when (ext.lowercase()) {
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "webp" -> "image/webp"
+            "svg" -> "image/svg+xml"
+            "bmp" -> "image/bmp"
+            "avif" -> "image/avif"
+            else -> "application/octet-stream"
         }
     }
 }

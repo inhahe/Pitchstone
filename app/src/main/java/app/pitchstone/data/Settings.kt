@@ -56,6 +56,8 @@ data class AppSettings(
     val readableLineLength: Boolean = true,
     val openInReadingMode: Boolean = false,
     val updateLinksOnRename: Boolean = true,
+    /** Photos inserted into notes are scaled down to [app.pitchstone.ui.editor.ImagePrep.MAX_SIDE]. */
+    val shrinkLargePhotos: Boolean = true,
     val sortOrder: SortOrder = SortOrder.MODIFIED_NEWEST,
     val exportFormat: ExportFormat = ExportFormat.MARKDOWN,
     val exportLayout: ExportLayout = ExportLayout.FILE_PER_NOTE,
@@ -83,6 +85,7 @@ class SettingsRepository(private val context: Context) {
         val readableLineLength = booleanPreferencesKey("readable_line_length")
         val openInReadingMode = booleanPreferencesKey("open_in_reading_mode")
         val updateLinksOnRename = booleanPreferencesKey("update_links_on_rename")
+        val shrinkLargePhotos = booleanPreferencesKey("shrink_large_photos")
         val sortOrder = stringPreferencesKey("sort_order")
         val exportFormat = stringPreferencesKey("export_format")
         val exportLayout = stringPreferencesKey("export_layout")
@@ -116,6 +119,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.readableLineLength] = now.readableLineLength
             p[Keys.openInReadingMode] = now.openInReadingMode
             p[Keys.updateLinksOnRename] = now.updateLinksOnRename
+            p[Keys.shrinkLargePhotos] = now.shrinkLargePhotos
             p[Keys.sortOrder] = now.sortOrder.name
             p[Keys.exportFormat] = now.exportFormat.name
             p[Keys.exportLayout] = now.exportLayout.name
@@ -140,6 +144,7 @@ class SettingsRepository(private val context: Context) {
         readableLineLength = p[Keys.readableLineLength] ?: d.readableLineLength,
         openInReadingMode = p[Keys.openInReadingMode] ?: d.openInReadingMode,
         updateLinksOnRename = p[Keys.updateLinksOnRename] ?: d.updateLinksOnRename,
+        shrinkLargePhotos = p[Keys.shrinkLargePhotos] ?: d.shrinkLargePhotos,
         sortOrder = p.enum(Keys.sortOrder, d.sortOrder),
         exportFormat = p.enum(Keys.exportFormat, d.exportFormat),
         exportLayout = p.enum(Keys.exportLayout, d.exportLayout),

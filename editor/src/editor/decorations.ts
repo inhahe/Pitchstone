@@ -5,7 +5,8 @@ import type {Node} from 'prosemirror-model'
 import {Plugin, PluginKey, type EditorState, type Transaction} from 'prosemirror-state'
 import {Decoration, DecorationSet} from 'prosemirror-view'
 import {schema} from '../schema'
-import {noteExists} from './links'
+import {isImageName} from './attachments'
+import {noteExists, wikilinkNote} from './links'
 
 const {nodes, marks} = schema
 
@@ -76,7 +77,8 @@ function blockDecorations(block: Node, pos: number, keys: ReadonlySet<string>, o
   if (block.type === nodes.code_block || block.type === nodes.frontmatter) return
   block.forEach((node, offset) => {
     const at = pos + 1 + offset
-    if (node.type === nodes.wikilink && !noteExists(keys, node.attrs.target)) {
+    // An embedded image is a file, not a note: it shows the picture, or a box when missing.
+    if (node.type === nodes.wikilink && !(node.attrs.embed && isImageName(wikilinkNote(node.attrs.target))) && !noteExists(keys, node.attrs.target)) {
       out.push(Decoration.node(at, at + node.nodeSize, {class: 'missing'}))
     }
     if (!node.isText || marks.code.isInSet(node.marks)) return

@@ -1,9 +1,12 @@
 package app.pitchstone.export
 
+import app.pitchstone.data.AttachmentStore
 import app.pitchstone.data.ExportFormat
 import app.pitchstone.data.ExportLayout
 import app.pitchstone.markdown.Markdown
 import app.pitchstone.markdown.PlainText
+import java.io.File
+import java.io.InputStream
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -39,18 +42,47 @@ data class ExportRequest(
     val singleFileName: String,
 )
 
-/** A file to write: [folder] is the path of subfolders below the destination. */
+/**
+ * A file to write: [folder] is the path of subfolders below the destination. Its content is the
+ * text [content], or, for a picture, what [source] reads.
+ */
 data class PlannedFile(
     val folder: List<String>,
     val baseName: String,
     val extension: String,
     val content: String,
+    val source: (() -> InputStream)? = null,
 )
 
 object ExportPlanner {
     private const val TEXT_SEPARATOR = "----------------------------------------"
 
-    fun plan(notes: List<ExportNote>, request: ExportRequest, zone: ZoneId = ZoneId.systemDefault()): List<PlannedFile> {
+    /** The folder below the destination that a markdown export puts the notes' pictures in. */
+    const val ATTACHMENTS_FOLDER = "attachments"
+
+    /**
+     * The files exporting [notes] as [request] says makes. A markdown export also writes the
+     * pictures the notes show, found by [attachments] (AttachmentStore.file), into
+     * [ATTACHMENTS_FOLDER]: Obsidian finds `![[name]]` anywhere in a vault.
+     */
+    fun plan(
+        notes: List<ExportNote>,
+        request: ExportRequest,
+        zone: ZoneId = ZoneId.systemDefault(),
+        attachments: (String) -> File? = { null },
+    ): List<PlannedFile> {
+        val files = planNotes(notes, request, zone)
+        if (request.format != ExportFormat.MARKDOWN) return files
+        val pictures = notes.flatMap { AttachmentStore.mentionedNames(it.body) }.toSet()
+            .mapNotNull(attachments)
+            .distinctBy { it.name.lowercase() }
+            .sortedBy { it.name.lowercase() }
+        return files + pictures.map { f ->
+            PlannedFile(listOf(ATTACHMENTS_FOLDER), f.nameWithoutExtension, f.extension, "", source = { f.inputStream() })
+        }
+    }
+
+    private fun planNotes(notes: List<ExportNote>, request: ExportRequest, zone: ZoneId): List<PlannedFile> {
         val ext = request.format.extension
         if (notes.size == 1 && request.layout == ExportLayout.FILE_PER_NOTE) {
             val note = notes.single()

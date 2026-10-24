@@ -2,4 +2,6 @@
 <paths>
     <!-- Notes shared as files (Sharing.noteFile). -->
     <cache-path name="shared" path="shared/" />
+    <!-- Pictures stored with notes, opened in a viewer (AttachmentStore). -->
+    <files-path name="attachments" path="attachments/" />
 </paths>

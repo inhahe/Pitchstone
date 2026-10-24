@@ -31,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Title
 import androidx.compose.material.icons.outlined.BorderColor
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -70,6 +71,8 @@ fun MarkdownToolbar(
     state: ToolbarState,
     onCommand: (String, kotlinx.serialization.json.JsonObject?) -> Unit,
     onWikilink: () -> Unit,
+    /** Pick a picture to put in the note. */
+    onImage: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 2.dp, modifier = modifier) {
@@ -99,6 +102,7 @@ fun MarkdownToolbar(
                 Separator()
                 ToolButton(Icons.Filled.Link, "Link", active = state.link) { onCommand("link", null) }
                 TextToolButton("[[ ]]", "Link to a note", onClick = onWikilink)
+                ToolButton(Icons.Outlined.Image, "Insert picture", onClick = onImage)
                 ToolButton(Icons.Filled.FormatQuote, "Quote", active = state.quote) { onCommand("blockquote", null) }
                 ToolButton(Icons.Filled.DataObject, "Code block", active = state.block == "code_block") { onCommand("codeBlock", null) }
                 TableButton(state, onCommand)

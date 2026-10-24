@@ -1,5 +1,5 @@
 import {expect, test} from '@playwright/test'
-import {command, FILE_PAGE, flush, markdown, messages, open, typeComposed} from './helpers'
+import {command, FILE_PAGE, flush, markdown, messages, open, PNG, servePictures, typeComposed} from './helpers'
 
 test.describe('markdown shortcuts on', () => {
   const cases: [string, string, string][] = [
@@ -397,5 +397,49 @@ test.describe('links into a note', () => {
     expect(Math.abs(await top('.ProseMirror h2 + p'))).toBeLessThan(5)
     expect(await scroll('Nowhere')).toBe(false)
     expect(await scroll('^')).toBe(false)
+  })
+})
+
+test.describe('pictures stored with notes', () => {
+  test('embeds and image paths show the stored picture, sized, or a box when missing', async ({page}) => {
+    await servePictures(page, ['pic.png', 'my pic.png'])
+    await open(page, '![[Pic.png]] and ![[pic.png|120]] and ![[gone.png]] and ![x](assets/my%20pic.png)\n')
+    const embeds = page.locator('.ProseMirror .embed-image img')
+    await expect(embeds).toHaveCount(3)
+    await expect.poll(() => embeds.nth(0).evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1)
+    await expect(embeds.nth(1)).toHaveAttribute('width', '120')
+    await expect(page.locator('.ProseMirror .embed-image.broken')).toHaveAttribute('data-alt', 'gone.png')
+    const markdownImage = page.locator('.ProseMirror .image:not(.embed-image) img')
+    await expect(markdownImage).toHaveAttribute('src', '/attachments/my%20pic.png')
+    await expect.poll(() => markdownImage.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1)
+    // Pictures are files, not notes: none is marked as a missing note.
+    await expect(page.locator('.ProseMirror .missing')).toHaveCount(0)
+    expect((await flush(page)).dirty).toBe(false)
+  })
+
+  test('a pasted picture goes to the app, not into the text', async ({page}) => {
+    await open(page, 'text\n')
+    await page.evaluate((b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+      const dt = new DataTransfer()
+      dt.items.add(new File([bytes], 'image.png', {type: 'image/png'}))
+      document.querySelector('.ProseMirror')!.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}))
+    }, PNG.toString('base64'))
+    await expect.poll(async () => (await messages(page)).find((m) => m.type === 'pasteImage')).toMatchObject({
+      type: 'pasteImage',
+      mime: 'image/png',
+      name: 'image.png',
+      data: PNG.toString('base64'),
+    })
+    // Nothing went into the text: the app inserts the picture once it has stored it.
+    expect((await flush(page)).dirty).toBe(false)
+  })
+
+  test("the app's answer embeds the picture where the cursor is", async ({page}) => {
+    await servePictures(page, ['Pasted image 1.png'])
+    await open(page, 'before\n')
+    await command(page, 'insertWikilink', {target: 'Pasted image 1.png', embed: true})
+    expect(await markdown(page)).toBe('before![[Pasted image 1.png]]\n')
+    await expect.poll(() => page.locator('.ProseMirror .embed-image img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1)
   })
 })

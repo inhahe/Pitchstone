@@ -72,6 +72,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                 "When a note's title changes, [[links]] to it in other notes change too",
                 s.updateLinksOnRename,
             ) { v -> update { it.copy(updateLinksOnRename = v) } }
+            SwitchRow(
+                "Shrink large photos",
+                "Photos put in notes are made at most 2560 pixels wide or high (screenshots and drawings stay as they are)",
+                s.shrinkLargePhotos,
+            ) { v -> update { it.copy(shrinkLargePhotos = v) } }
 
             Section("Text")
             var size by remember(s.fontSize) { mutableFloatStateOf(s.fontSize.toFloat()) }

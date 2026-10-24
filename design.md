@@ -11,13 +11,16 @@ editor/                  The editor page (TypeScript, ProseMirror, markdown-it)
   src/markdown/          The markdown dialect: md.ts (markdown-it config), parse.ts, serialize.ts
   src/editor/            Interactive layer: editor.ts (page controller), rules.ts (shortcuts),
                          commands.ts, keymap in editor.ts, decorations.ts, bubble.ts,
-                         suggest.ts, views.ts, plugins.ts, bridge.ts, settings.ts
+                         suggest.ts, views.ts, plugins.ts, bridge.ts, settings.ts,
+                         links.ts (link rules), attachments.ts (pictures)
+  src/worker.ts          autosave serialization off the main thread
   src/main.ts            window.pitchstone API for the app
   test/                  vitest: round trips, CommonMark spec corpus, fuzzer (+ shrinker)
   e2e/                   Playwright (Chromium, Pixel 7 emulation): typing, IME, commands
   build.mjs              esbuild bundle -> <out>/{index.html, editor.js, *.css}
 app/                     The Android app (package app.pitchstone)
-  data/                  Room: entities, DAO, AppDatabase; NoteRepository; Settings (DataStore)
+  data/                  Room: entities, DAO, AppDatabase; NoteRepository, LinkResolver;
+                         Attachments (pictures); Settings (DataStore)
   markdown/              commonmark-java in the editor's dialect: Markdown, WikiLinks,
                          PlainText, Html, NoteIndexer, LinkRewriter
   export/                FileNames, ExportPlanner, ExportWriter, DocumentTree (SAF), Importer
@@ -210,9 +213,9 @@ lower-cased): first a note whose whole title matches (titles may contain `/`), t
 several: same folder, then top level, then most recently edited. A link is indexed
 (`note_links`) under its whole name and the part after each `/`, so backlinks and renames find
 every link that may mean a note; `backlinks` then keeps those that resolve to it. Following a
-link to a missing note creates it (`folder/note` in that folder, as Obsidian does); links to
-attachments (`WikiLinks.isAttachment`: images, audio, video, PDF, office files, canvases) are
-refused. The editor's missing-link marks use the same rules (`editor/src/editor/links.ts`).
+link to a missing note creates it (`folder/note` in that folder, as Obsidian does); a link to
+an attachment (`WikiLinks.isAttachment`: images, audio, video, PDF, office files, canvases)
+opens the stored file in a viewer through the FileProvider, and never makes a note. The editor's missing-link marks use the same rules (`editor/src/editor/links.ts`).
 
 Settings live in DataStore (`Settings.kt`).
 
@@ -234,6 +237,31 @@ Where the two parsers could disagree, the app follows markdown-it:
 `Html` renders with raw HTML escaped and unsafe URLs dropped; email output uses inline styles
 and ☐/☑ characters for tasks, whose list items show no bullet (`class="task"` in a document,
 an inline `list-style:none` in email). `PlainText` renders structure without symbols.
+
+## Pictures (attachments)
+
+Pictures are files stored with the notes in `files/attachments/<name>` (`AttachmentStore`), with
+a row each in `attachments` (name unique ignoring case, `orphanedAt`). Notes mention them as
+Obsidian does, by name: `![[name]]` (or `![](path/name)` from imported notes, matched by file
+name). The page loads them from `/attachments/<name>` on its own origin, which
+`EditorWebView.AttachmentPathHandler` serves (case and folders ignored); `attachments.ts` and
+`views.ts` (`WikilinkView`, `ImageView`) draw image embeds and local image paths as pictures,
+sized by Obsidian's `|300` or `|300x200`, or as a box with the name when missing.
+
+In: a paste or drop of image files is posted to the app as `pasteImage` (base64); the photo
+picker (toolbar) goes through `ImagePrep` (HEIC becomes JPEG; with the setting on, photos over
+2560 pixels are scaled down, as JPEG, EXIF orientation applied). The app stores the picture
+(`add`: a unique name, "Pasted image <time>.png" for pastes) and answers with
+`insertWikilink {embed: true}`. Out: a markdown export adds the pictures its notes mention in
+`attachments/`; an HTML file holds them as data URLs; email bodies name them. Import stores
+the pictures an imported note mentions (`addOrReuse`: identical bytes are reused; a taken name
+gets a new one and the note's mentions follow, `LinkRewriter.renameAttachment`).
+
+Clean-up (`collectAttachmentGarbage`, at start-up at most daily): names mentioned by any note
+(trash included) are read page by page; the rest are looked for in versions with a LIKE query;
+an attachment nothing mentions is marked and deleted 30 days later. Pictures go to device
+transfer, not cloud backup (25 MB limit). Version 2 of the database added the table (automatic
+migration, tested from the exported version 1 schema).
 
 ## Export and import
 

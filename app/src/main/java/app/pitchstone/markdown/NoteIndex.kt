@@ -197,4 +197,46 @@ object LinkRewriter {
         out.append(body, last, body.length)
         return source.substring(0, head) + out
     }
+
+    /**
+     * Points the mentions of the attachment named [from] (a file name) at [to]: `![[from]]`,
+     * `[[folder/from|alias]]` and link destinations ending in it (`![](pics/from)`), each
+     * keeping what surrounds the name. Names compare ignoring case. Returns [markdown]
+     * unchanged if nothing mentions it.
+     */
+    fun renameAttachment(markdown: String, from: String, to: String): String {
+        val source = Markdown.normalizeNewlines(markdown)
+        val body = Markdown.splitFrontMatter(source).body
+        val head = source.length - body.length
+        val edits = ArrayList<Pair<IntRange, String>>()
+        for (link in Markdown.wikiLinks(body)) {
+            val targetStart = link.start + (if (link.embed) 1 else 0) + 2
+            val inner = body.substring(targetStart, link.end - 2)
+            val noteEnd = listOf(inner.indexOf('|'), inner.indexOf('#')).filter { it >= 0 }.minOrNull() ?: inner.length
+            val name = inner.substring(0, noteEnd).trimEnd()
+            val baseFrom = maxOf(name.lastIndexOf('/'), name.lastIndexOf('\\')) + 1
+            if (name.substring(baseFrom).trim().equals(from, ignoreCase = true)) {
+                edits += (targetStart + baseFrom until targetStart + name.length) to to
+            }
+        }
+        for (m in DESTINATION.findAll(body)) {
+            val angled = m.groups[1] != null
+            val dest = m.groups[1] ?: m.groups[2]!!
+            val raw = dest.value
+            val baseFrom = maxOf(raw.lastIndexOf('/'), raw.lastIndexOf('\\')) + 1
+            val tail = raw.substring(baseFrom)
+            val name = if (angled) tail else runCatching { java.net.URLDecoder.decode(tail.replace("+", "%2B"), "UTF-8") }.getOrDefault(tail)
+            if (name.equals(from, ignoreCase = true)) {
+                val spelled = if (angled) to else to.replace("%", "%25").replace(" ", "%20").replace("(", "%28").replace(")", "%29")
+                edits += (dest.range.first + baseFrom..dest.range.last) to spelled
+            }
+        }
+        if (edits.isEmpty()) return markdown
+        val out = StringBuilder(body)
+        for ((range, text) in edits.sortedByDescending { it.first.first }) out.replace(range.first, range.last + 1, text)
+        return source.substring(0, head) + out
+    }
+
+    /** A link or image destination: `](<a b.png>` (group 1, spaces allowed) or `](a%20b.png` (group 2). */
+    private val DESTINATION = Regex("\\]\\(\\s*(?:<([^>\\n]*)>|([^)\\s]+))")
 }
