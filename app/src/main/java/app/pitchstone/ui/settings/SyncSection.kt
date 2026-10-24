@@ -5,16 +5,21 @@ import android.net.Uri
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -39,9 +44,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Settings → Sync with a folder: choosing the folder (after a preview), the last sync, and stopping. */
+/**
+ * Settings → Sync with a folder: choosing the folder (after a preview), the folders left out,
+ * the last sync, and stopping. [folderUri] and [excluded] are the settings as they are.
+ */
 @Composable
-fun SyncSection(folderUri: String?) {
+fun SyncSection(folderUri: String?, excluded: Set<String>) {
     val context = LocalContext.current
     val container = context.container
     val sync = container.sync
@@ -50,12 +58,30 @@ fun SyncSection(folderUri: String?) {
         value = folderUri?.let { withContext(Dispatchers.IO) { sync.folderName(it) } } ?: "the folder"
     }
 
-    /** The folder being chosen, while its preview shows. */
+    /** The folder being chosen, while its preview shows, and the folders to leave out of it. */
     var choosing by remember { mutableStateOf<Uri?>(null) }
+    var choosingExcluded by remember { mutableStateOf(emptySet<String>()) }
     var preview by remember { mutableStateOf<SyncPreview?>(null) }
     var previewError by remember { mutableStateOf<String?>(null) }
+    /** The folder whose subfolders are being chosen to leave out, if that dialog shows. */
+    var pickingFoldersOf by remember { mutableStateOf<Uri?>(null) }
     var confirmStop by remember { mutableStateOf(false) }
     var showProblems by remember { mutableStateOf(false) }
+
+    fun loadPreview(uri: Uri, leftOut: Set<String>) {
+        preview = null
+        previewError = null
+        container.appScope.launch {
+            // Only for the folder still being chosen (not one cancelled meanwhile).
+            try {
+                val p = sync.preview(uri, leftOut)
+                if (choosing == uri && choosingExcluded == leftOut) preview = p
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (choosing == uri) previewError = e.message ?: e.javaClass.simpleName
+            }
+        }
+    }
 
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -67,23 +93,13 @@ fun SyncSection(folderUri: String?) {
             return@rememberLauncherForActivityResult
         }
         choosing = uri
-        preview = null
-        previewError = null
-        container.appScope.launch {
-            // Only for the folder still being chosen (not one cancelled meanwhile).
-            try {
-                val p = sync.preview(uri)
-                if (choosing == uri) preview = p
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                if (choosing == uri) previewError = e.message ?: e.javaClass.simpleName
-            }
-        }
+        choosingExcluded = emptySet()
+        loadPreview(uri, emptySet())
     }
 
     Text(
         "Keep the notes in step with a folder on this phone: an Obsidian vault, or a folder Syncthing or another app syncs. " +
-            "Each note is a markdown file there, Folder/Title.md, and the pictures notes show are files there too. " +
+            "Each note is a markdown file there, Folder/Title.md, and the files notes link to (pictures, PDFs, recordings) are there too. " +
             "Changes on either side reach the other when Pitchstone opens or closes, and every 15 minutes or so.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -156,7 +172,13 @@ fun SyncSection(folderUri: String?) {
                 if (n > 50) Text("…and ${n - 50} more", style = MaterialTheme.typography.bodySmall)
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+        Text(
+            "Left out of sync: ${leftOutText(excluded)}",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        TextButton(onClick = { pickingFoldersOf = Uri.parse(folderUri) }, enabled = !status.running) { Text("Choose folders to leave out") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
             Button(onClick = { container.appScope.launch { sync.syncNow() } }, enabled = !status.running) { Text("Sync now") }
             OutlinedButton(onClick = { pick.launch(null) }, enabled = !status.running) { Text("Change folder") }
         }
@@ -164,7 +186,7 @@ fun SyncSection(folderUri: String?) {
     }
 
     val uri = choosing
-    if (uri != null) {
+    if (uri != null && pickingFoldersOf == null) {
         fun cancel() {
             choosing = null
             if (uri.toString() != folderUri) container.appScope.launch { sync.releasePermission(uri.toString()) }
@@ -174,13 +196,19 @@ fun SyncSection(folderUri: String?) {
             onDismissRequest = ::cancel,
             title = { Text("Sync with this folder?") },
             text = {
-                when {
-                    previewError != null -> Text("The folder could not be read: $previewError")
-                    p == null -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Text("  Looking at the folder…")
+                Column {
+                    when {
+                        previewError != null -> Text("The folder could not be read: $previewError")
+                        p == null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Text("  Looking at the folder…")
+                        }
+                        else -> Text(previewText(p))
                     }
-                    else -> Text(previewText(p))
+                    if (previewError == null) {
+                        Text("Left out of sync: ${leftOutText(choosingExcluded)}", modifier = Modifier.padding(top = 12.dp))
+                        TextButton(onClick = { pickingFoldersOf = uri }) { Text("Choose folders to leave out") }
+                    }
                 }
             },
             confirmButton = {
@@ -188,11 +216,31 @@ fun SyncSection(folderUri: String?) {
                     enabled = p != null && previewError == null,
                     onClick = {
                         choosing = null
-                        container.appScope.launch { sync.start(uri) }
+                        val leftOut = choosingExcluded
+                        container.appScope.launch { sync.start(uri, leftOut) }
                     },
                 ) { Text("Start syncing") }
             },
             dismissButton = { TextButton(onClick = ::cancel) { Text("Cancel") } },
+        )
+    }
+
+    pickingFoldersOf?.let { of ->
+        // For the folder being chosen, or the one synced.
+        val forChoice = of == choosing
+        FoldersDialog(
+            load = { sync.folders(of) },
+            initial = if (forChoice) choosingExcluded else excluded,
+            onDone = { chosen ->
+                pickingFoldersOf = null
+                if (forChoice) {
+                    choosingExcluded = chosen
+                    loadPreview(of, chosen)
+                } else {
+                    container.appScope.launch { sync.setExcluded(chosen) }
+                }
+            },
+            onDismiss = { pickingFoldersOf = null },
         )
     }
 
@@ -210,6 +258,71 @@ fun SyncSection(folderUri: String?) {
             dismissButton = { TextButton(onClick = { confirmStop = false }) { Text("Cancel") } },
         )
     }
+}
+
+/** The folders left out, in a few words. */
+private fun leftOutText(excluded: Set<String>) =
+    if (excluded.isEmpty()) "nothing" else excluded.sortedWith(String.CASE_INSENSITIVE_ORDER).joinToString(", ")
+
+/**
+ * Chooses the folders to leave out of sync among those [load] lists ("Archive", "Archive/2020"),
+ * starting from [initial]. A folder inside one left out is left out with it.
+ */
+@Composable
+private fun FoldersDialog(load: suspend () -> List<String>, initial: Set<String>, onDone: (Set<String>) -> Unit, onDismiss: () -> Unit) {
+    val folders by produceState<Result<List<String>>?>(null) { value = runCatching { withContext(Dispatchers.IO) { load() } } }
+    var chosen by remember { mutableStateOf(initial) }
+    fun isChosen(path: String) = chosen.any { it.equals(path, ignoreCase = true) }
+    /** Whether a folder above [path] is left out (and with it, this one). */
+    fun underChosen(path: String) = chosen.any { path.startsWith("$it/", ignoreCase = true) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Folders to leave out") },
+        text = {
+            val result = folders
+            when {
+                result == null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text("  Looking at the folder…")
+                }
+                result.isFailure -> Text("The folder could not be read: ${result.exceptionOrNull()?.message}")
+                result.getOrThrow().isEmpty() -> Text("This folder has no folders in it.")
+                else -> Column {
+                    Text(
+                        "Their notes stay as they are on both sides, and are not kept in step.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    LazyColumn(Modifier.heightIn(max = 360.dp).padding(top = 8.dp)) {
+                        items(result.getOrThrow()) { path ->
+                            val implied = underChosen(path)
+                            val depth = path.count { it == '/' }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = !implied) {
+                                        chosen = if (isChosen(path)) {
+                                            chosen.filterNot { it.equals(path, ignoreCase = true) }.toSet()
+                                        } else {
+                                            // Those inside it go with it.
+                                            chosen.filterNot { it.startsWith("$path/", ignoreCase = true) }.toSet() + path
+                                        }
+                                    }
+                                    .padding(start = (depth * 20).dp),
+                            ) {
+                                Checkbox(checked = implied || isChosen(path), onCheckedChange = null, enabled = !implied)
+                                Text(path.substringAfterLast('/'), modifier = Modifier.padding(start = 8.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(enabled = folders?.isSuccess == true, onClick = { onDone(chosen) }) { Text("Done") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /** "just now", "5 minutes ago", "yesterday"... */
@@ -242,7 +355,7 @@ internal fun summary(r: SyncReport): String {
         if (r.renamed > 0) add("${count(r.renamed, "note", "notes")} renamed or moved")
         if (r.trashedNotes > 0) add("${count(r.trashedNotes, "note", "notes")} moved to the trash")
         if (r.trashedFiles > 0) add("${count(r.trashedFiles, "file", "files")} moved to the folder's .trash")
-        if (r.pictures > 0) add("${count(r.pictures, "picture", "pictures")} copied")
+        if (r.attachments > 0) add("${count(r.attachments, "attachment", "attachments")} copied")
         if (r.conflicts.isNotEmpty()) add("${count(r.conflicts.size, "note", "notes")} changed on both sides")
     }
     return if (parts.isEmpty()) "everything was in step" else parts.joinToString(", ")

@@ -98,6 +98,11 @@ test.describe('markdown shortcuts on', () => {
     await expect(page.locator('.ProseMirror .missing')).toHaveText(['Nope'])
   })
 
+  test('a link to an attachment is marked only if it is not stored', async ({page}) => {
+    await open(page, '[[Report.PDF]] [[files/talk.m4a]] [[gone.pdf]]\n', {attachments: ['report.pdf', 'talk.m4a']})
+    await expect(page.locator('.ProseMirror .missing')).toHaveText(['gone.pdf'])
+  })
+
   test('Enter after a link followed by --- keeps the line', async ({page}) => {
     await open(page, '[[Note]]---\n')
     await page.keyboard.press('Enter')
@@ -444,7 +449,7 @@ test.describe('pictures stored with notes', () => {
     })
     await expect.poll(async () => (await messages(page)).find((m) => m.type === 'warning')).toMatchObject({
       code: 'imageTooLarge',
-      message: 'huge.png is larger than 25 MB, the most a picture can be.',
+      message: 'huge.png is larger than 25 MB, the most a pasted picture can be.',
     })
     expect((await messages(page)).some((m) => m.type === 'pasteImage')).toBe(false)
   })

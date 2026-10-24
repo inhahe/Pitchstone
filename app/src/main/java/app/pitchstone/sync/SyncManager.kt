@@ -139,26 +139,37 @@ class SyncManager(
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(WORK_PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request)
     }
 
-    /** What a first sync with the folder [uri] would do. */
-    suspend fun preview(uri: Uri): SyncPreview = engine.preview(SafDir.root(context.contentResolver, uri))
+    /** What a first sync with the folder [uri] would do, leaving out the folders [excluded]. */
+    suspend fun preview(uri: Uri, excluded: Set<String>): SyncPreview = engine.preview(SafDir.root(context.contentResolver, uri), excluded)
+
+    /** The folders in the folder [uri], for choosing which to leave out. */
+    suspend fun folders(uri: Uri): List<String> = engine.folders(SafDir.root(context.contentResolver, uri))
+
+    /** Leaves the folders [excluded] out of sync from now on (their notes stay as they are on both sides). */
+    suspend fun setExcluded(excluded: Set<String>) {
+        settings.update { it.copy(syncExcluded = excluded) }
+        requestSync()
+    }
 
     /** The display name of the folder [uri]. */
     fun folderName(uri: String): String = runCatching { SafDir.root(context.contentResolver, Uri.parse(uri)).name }.getOrDefault("the folder")
 
     /**
-     * Starts syncing with [uri] (whose permission is held). Another folder than the one set starts
-     * afresh, what was paired with the old one forgotten; the same one (chosen again after its
-     * permission was lost) carries on where it was.
+     * Starts syncing with [uri] (whose permission is held), leaving out the folders [excluded].
+     * Another folder than the one set starts afresh, what was paired with the old one forgotten;
+     * the same one (chosen again after its permission was lost) carries on where it was, and
+     * keeps the folders left out.
      */
-    suspend fun start(uri: Uri) {
+    suspend fun start(uri: Uri, excluded: Set<String> = emptySet()) {
         lock.withLock {
             val old = settings.current().syncFolderUri
-            if (old != uri.toString()) {
+            val same = old == uri.toString()
+            if (!same) {
                 entries.clear()
                 prefs.edit().remove(KEY_REPORT).remove(KEY_CHANGE).apply()
                 _status.value = SyncStatus()
             }
-            settings.update { it.copy(syncFolderUri = uri.toString()) }
+            settings.update { it.copy(syncFolderUri = uri.toString(), syncExcluded = if (same) it.syncExcluded else excluded) }
             if (old != null && old != uri.toString()) releasePermission(old)
             prefs.edit().remove(KEY_ERROR).apply()
             _status.update { it.copy(error = null) }
@@ -173,7 +184,7 @@ class SyncManager(
         WorkManager.getInstance(context).cancelUniqueWork(WORK_SOON)
         lock.withLock {
             val old = settings.current().syncFolderUri
-            settings.update { it.copy(syncFolderUri = null) }
+            settings.update { it.copy(syncFolderUri = null, syncExcluded = emptySet()) }
             entries.clear()
             if (old != null) releasePermission(old)
             prefs.edit().remove(KEY_REPORT).remove(KEY_CHANGE).remove(KEY_ERROR).apply()
@@ -202,7 +213,7 @@ class SyncManager(
         // A sync stopped midway (WorkManager cancelling it) must not leave "Syncing…" up.
         try {
             val root = SafDir.root(context.contentResolver, Uri.parse(uri))
-            val report = engine.sync(root, s.updateLinksOnRename, busy = { open.containsKey(it) }, gone = gone)
+            val report = engine.sync(root, s.updateLinksOnRename, excluded = s.syncExcluded, busy = { open.containsKey(it) }, gone = gone)
             val before = _status.value.last
             val changed = report.changes > 0 || report.conflicts.isNotEmpty()
             val lastChange = if (changed) report else _status.value.lastChange

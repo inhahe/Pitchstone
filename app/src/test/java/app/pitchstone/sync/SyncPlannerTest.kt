@@ -133,6 +133,31 @@ class SyncPlannerTest {
     }
 
     @Test
+    fun `a file moved into a folder left out is followed, and that folder is listed only then`() {
+        val pairs = listOf(pair("A.md", 1, "text", 50))
+        val leftOut = Folder("Archive/A.md" to ("text" to 60L))
+        var listed = 0
+        fun outside(): List<VaultFile> {
+            listed++
+            return leftOut.list
+        }
+        val plan = SyncPlanner.plan(emptyList(), listOf(note(1, "A", "text")), pairs, leftOut::hash, ::outside)
+        assertThat(plan).containsExactly(Adopt(1, "A.md", "Archive/A.md", writeNote = false))
+        assertThat(listed).isEqualTo(1)
+        // Nothing gone: the folders left out are not looked into.
+        SyncPlanner.plan(Folder("A.md" to ("text" to 50L)).list, listOf(note(1, "A", "text")), pairs, leftOut::hash, ::outside)
+        assertThat(listed).isEqualTo(1)
+    }
+
+    @Test
+    fun `looking for a moved file reads only files of the pair's size`() {
+        val pairs = listOf(pair("A.md", 1, "text", 50))
+        val folder = Folder("Long.md" to ("much longer text" to 60L), "B.md" to ("text" to 60L))
+        assertThat(plan(folder, listOf(note(1, "A", "text")), pairs)).containsExactly(Adopt(1, "A.md", "B.md", writeNote = false), Import("Long.md"))
+        assertThat(folder.read).containsExactly("B.md")
+    }
+
+    @Test
     fun `a file deleted outside sends its note to the trash, unless the note changed since`() {
         val pairs = listOf(pair("A.md", 1, "text", 50))
         assertThat(plan(Folder(), listOf(note(1, "A", "text")), pairs)).containsExactly(TrashNote(1, "A.md"))
@@ -194,7 +219,7 @@ class SyncPlannerTest {
     fun `a file that cannot be read is never taken for a rename`() {
         val pairs = listOf(pair("A.md", 1, "text", 50))
         val folder = Folder("B.md" to ("text" to 60L))
-        val plan = SyncPlanner.plan(folder.list, listOf(note(1, "A", "text")), pairs) { "unreadable:$it" }
+        val plan = SyncPlanner.plan(folder.list, listOf(note(1, "A", "text")), pairs, fileHash = { "unreadable:$it" })
         assertThat(plan).containsExactly(TrashNote(1, "A.md"), Import("B.md"))
     }
 }

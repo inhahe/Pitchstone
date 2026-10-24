@@ -8,7 +8,9 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.withTransaction
 import app.pitchstone.export.FileNames
+import app.pitchstone.markdown.WikiLinks
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -45,6 +47,9 @@ interface AttachmentDao {
     @Query("SELECT * FROM attachments")
     suspend fun all(): List<AttachmentEntity>
 
+    @Query("SELECT name FROM attachments")
+    fun observeNames(): Flow<List<String>>
+
     @Query("UPDATE attachments SET orphanedAt = :at WHERE name IN (:names)")
     suspend fun setOrphaned(names: List<String>, at: Long?)
 
@@ -73,13 +78,21 @@ class AttachmentStore(
     private val naming = Mutex()
 
     companion object {
-        const val MAX_BYTES = 25_000_000L
+        /** The largest attachment stored (a video, say); a pasted picture is limited further by the editor. */
+        const val MAX_BYTES = 100_000_000L
         const val GRACE_MS = 30L * 24 * 60 * 60 * 1000
 
         /** File types shown as pictures in notes (the editor's attachments.ts has the same list). */
         val IMAGE_EXTENSIONS = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif")
 
         fun isImage(name: String): Boolean = name.substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS
+
+        /**
+         * Whether a file called [name] is an attachment a note may link to (pictures, audio,
+         * video, PDFs, office files, canvases: [WikiLinks.isAttachment]), stored with the notes on
+         * import and sync.
+         */
+        fun isAttachment(name: String): Boolean = WikiLinks.isAttachment(name)
 
         /** The file name in a reference: no folder part (`attachments/pic.png` -> `pic.png`). */
         fun baseName(reference: String): String = reference.substringAfterLast('/').substringAfterLast('\\').trim()
@@ -219,6 +232,9 @@ class AttachmentStore(
         while (file(candidate(n)) != null || dao.get(candidate(n)) != null) n++
         return candidate(n)
     }
+
+    /** The names of the stored attachments, as they change (for the editor's missing-link marks). */
+    fun observeNames(): Flow<List<String>> = dao.observeNames()
 
     /** The names of all stored attachments. */
     suspend fun names(): List<String> = withContext(Dispatchers.IO) {

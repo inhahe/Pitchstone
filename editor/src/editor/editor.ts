@@ -57,6 +57,8 @@ export interface NoteNames {
   titles: string[]
   /** The app's lookup keys of every note (see links.ts, noteExists). */
   keys: string[]
+  /** The names of the attachments stored with the notes, lower-cased (attachments.ts, attachmentKey). */
+  attachments?: string[]
 }
 
 export interface LoadPayload {
@@ -104,7 +106,7 @@ function sendImages(data: DataTransfer | null): boolean {
   for (const file of files) {
     if (file.size > MAX_IMAGE_BYTES) {
       const mb = MAX_IMAGE_BYTES / 1_000_000
-      post({type: 'warning', code: 'imageTooLarge', message: `${file.name || 'This picture'} is larger than ${mb} MB, the most a picture can be.`})
+      post({type: 'warning', code: 'imageTooLarge', message: `${file.name || 'This picture'} is larger than ${mb} MB, the most a pasted picture can be.`})
       continue
     }
     const reader = new FileReader()
@@ -443,7 +445,7 @@ export class PitchstoneEditor {
       this.placeholder = true
     }
     this.view.updateState(this.createState(doc))
-    this.view.dispatch(this.view.state.tr.setMeta(decorationsKey, {keys: this.notes.keys}))
+    this.view.dispatch(this.view.state.tr.setMeta(decorationsKey, this.knownMeta()))
     this.source.value = p.markdown
     this.sourceBaseline = p.markdown
     this.applyMode(mode, false)
@@ -462,7 +464,12 @@ export class PitchstoneEditor {
 
   setNotes(notes: NoteNames) {
     this.notes = notes
-    this.view.dispatch(this.view.state.tr.setMeta(decorationsKey, {keys: notes.keys}))
+    this.view.dispatch(this.view.state.tr.setMeta(decorationsKey, this.knownMeta()))
+  }
+
+  /** What exists, for the missing-link marks (decorations.ts). */
+  private knownMeta() {
+    return {keys: this.notes.keys, attachments: this.notes.attachments ?? []}
   }
 
   getMode(): Mode {
@@ -491,7 +498,7 @@ export class PitchstoneEditor {
           // Nothing to undo back to: the stand-in was never the note.
           const pending = this.dirty
           this.view.updateState(this.createState(doc))
-          this.view.dispatch(this.view.state.tr.setMeta(decorationsKey, {keys: this.notes.keys}))
+          this.view.dispatch(this.view.state.tr.setMeta(decorationsKey, this.knownMeta()))
           this.dirty = pending
           this.placeholder = false
         } else {

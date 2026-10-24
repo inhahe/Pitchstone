@@ -67,7 +67,8 @@ sealed interface SyncAction {
  * if its text's hash differs from the pair's; a file's text is read ([fileHash]) only when
  * its time or size moved, or it is new. Nothing is ever lost: a deleted note's file goes to the
  * folder's `.trash`, a deleted file's note to the app's trash, and of two different texts the
- * one not kept stays in the note's version history.
+ * one not kept stays in the note's version history. [outside] lists the markdown files in the
+ * folders left out of sync; it is asked only to follow a paired file moved into one.
  */
 object SyncPlanner {
     fun plan(
@@ -75,6 +76,7 @@ object SyncPlanner {
         notes: List<SyncNote>,
         pairs: List<SyncPair>,
         fileHash: (path: String) -> String,
+        outside: () -> List<VaultFile> = { emptyList() },
     ): List<SyncAction> {
         val filesByPath = files.associateBy { it.path.lowercase() }
         val notesById = notes.associateBy { it.id }
@@ -121,10 +123,15 @@ object SyncPlanner {
         }
 
         val unpaired = files.filter { it.path.lowercase() !in usedFiles }
+        val outsideFiles by lazy(outside)
         for (pair in gone) {
             val note = notesById[pair.noteId]
             // The same text under another name, new to this sync: the file was moved or renamed.
-            val moved = unpaired.firstOrNull { it.path.lowercase() !in usedFiles && fileHash(it.path) == pair.hash }
+            // Unchanged, it has the pair's size: only those are read.
+            fun movedAmong(candidates: List<VaultFile>) =
+                candidates.firstOrNull { it.size == pair.size && it.path.lowercase() !in usedFiles && fileHash(it.path) == pair.hash }
+            // Into a folder left out of sync, only for a note that can follow it there.
+            val moved = movedAmong(unpaired) ?: if (note != null && !note.trashed) movedAmong(outsideFiles) else null
             if (moved != null && note != null) {
                 usedFiles += moved.path.lowercase()
                 if (note.trashed) {

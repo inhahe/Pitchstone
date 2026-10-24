@@ -144,6 +144,11 @@ class EditorViewModel(
     private val linkTargets: StateFlow<List<NoteTitle>> = repo.linkTargets()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** The stored attachments' names, lower-cased: a link to one is not a missing note. */
+    private val attachmentNames: StateFlow<List<String>> = container.attachments.observeNames()
+        .map { names -> names.map { it.lowercase() } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     /** The titles of all notes, each once. */
     val noteTitles: StateFlow<List<String>> = linkTargets
         .map { targets -> targets.map { it.title }.filter { it.isNotBlank() }.distinct() }
@@ -194,10 +199,10 @@ class EditorViewModel(
             watchForOutsideChanges()
         }
         viewModelScope.launch {
-            combine(settings, linkTargets) { s, t -> s to t }.collect { (s, targets) ->
+            combine(settings, linkTargets, attachmentNames) { s, t, a -> Triple(s, t, a) }.collect { (s, targets, attachments) ->
                 if (loadedIntoPage) {
                     port?.call("setSettings", settingsJson(s).toString())
-                    port?.call("setNotes", notesJson(targets).toString())
+                    port?.call("setNotes", notesJson(targets, attachments).toString())
                 }
             }
         }
@@ -301,14 +306,18 @@ class EditorViewModel(
         themeJson?.let { put("theme", it) }
     }
 
-    /** The other notes for the page (NoteNames in editor.ts): titles, and keys to find them by. */
-    private fun notesJson(targets: List<NoteTitle>) = buildJsonObject {
+    /**
+     * The other notes for the page (NoteNames in editor.ts): titles, and keys to find them by;
+     * and the stored [attachments] (lower-cased names), which links may name too.
+     */
+    private fun notesJson(targets: List<NoteTitle>, attachments: List<String>) = buildJsonObject {
         put("titles", buildJsonArray {
             targets.map { it.title }.filter { it.isNotBlank() }.distinct().forEach { add(JsonPrimitive(it)) }
         })
         put("keys", buildJsonArray {
             targets.flatMap { WikiLinks.lookupKeys(it.title, it.folder) }.distinct().forEach { add(JsonPrimitive(it)) }
         })
+        put("attachments", buildJsonArray { attachments.forEach { add(JsonPrimitive(it)) } })
     }
 
     private fun loadIntoPage() {
@@ -322,7 +331,7 @@ class EditorViewModel(
             put("title", c.title)
             put("mode", _state.value.mode.js)
             put("settings", settingsJson(settings.value))
-            put("notes", notesJson(linkTargets.value))
+            put("notes", notesJson(linkTargets.value, attachmentNames.value))
             put("focus", if (fresh) "title" else "none")
         }
         p.call("load", payload.toString())

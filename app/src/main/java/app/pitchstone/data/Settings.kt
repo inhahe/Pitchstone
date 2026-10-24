@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -72,6 +73,8 @@ data class AppSettings(
     val shareAttachFile: Boolean = false,
     /** The folder (a document tree URI) notes are kept in step with, or null ([app.pitchstone.sync.SyncManager]). */
     val syncFolderUri: String? = null,
+    /** Folders of the synced folder left out of sync ("Templates", "Archive/2020"). */
+    val syncExcluded: Set<String> = emptySet(),
 )
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -100,6 +103,7 @@ class SettingsRepository(private val context: Context) {
         val shareFormat = stringPreferencesKey("share_format")
         val shareAttachFile = booleanPreferencesKey("share_attach_file")
         val syncFolderUri = stringPreferencesKey("sync_folder_uri")
+        val syncExcluded = stringSetPreferencesKey("sync_excluded")
     }
 
     private inline fun <reified E : Enum<E>> Preferences.enum(key: Preferences.Key<String>, default: E): E =
@@ -135,6 +139,7 @@ class SettingsRepository(private val context: Context) {
             p[Keys.shareFormat] = now.shareFormat.name
             p[Keys.shareAttachFile] = now.shareAttachFile
             if (now.syncFolderUri != null) p[Keys.syncFolderUri] = now.syncFolderUri else p.remove(Keys.syncFolderUri)
+            p[Keys.syncExcluded] = now.syncExcluded
         }
     }
 
@@ -161,5 +166,6 @@ class SettingsRepository(private val context: Context) {
         shareFormat = p.enum(Keys.shareFormat, d.shareFormat),
         shareAttachFile = p[Keys.shareAttachFile] ?: d.shareAttachFile,
         syncFolderUri = p[Keys.syncFolderUri],
+        syncExcluded = p[Keys.syncExcluded] ?: d.syncExcluded,
     )
 }

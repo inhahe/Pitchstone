@@ -43,7 +43,7 @@ function asChrome90() {
 export async function open(
   page: Page,
   markdown = '',
-  opts: {shortcuts?: boolean; titles?: string[]; mode?: string; url?: string} = {},
+  opts: {shortcuts?: boolean; titles?: string[]; attachments?: string[]; mode?: string; url?: string} = {},
 ) {
   await page.addInitScript(asChrome90)
   await page.route(`${ORIGIN}/**`, (route) => {
@@ -54,19 +54,19 @@ export async function open(
   })
   await page.goto(opts.url ?? PAGE)
   await page.evaluate(
-    ([markdown, shortcuts, titles, keys, mode]) => {
+    ([markdown, shortcuts, titles, keys, attachments, mode]) => {
       window.pitchstone.load(
         JSON.stringify({
           markdown,
           title: 'Test',
           mode,
           settings: {markdownShortcuts: shortcuts},
-          notes: {titles, keys},
+          notes: {titles, keys, attachments},
           focus: 'end',
         }),
       )
     },
-    [markdown, opts.shortcuts ?? true, opts.titles ?? [], (opts.titles ?? []).map(linkKey), opts.mode ?? 'edit'] as const,
+    [markdown, opts.shortcuts ?? true, opts.titles ?? [], (opts.titles ?? []).map(linkKey), opts.attachments ?? [], opts.mode ?? 'edit'] as const,
   )
   if ((opts.mode ?? 'edit') === 'edit') await page.locator('.ProseMirror').focus()
 }

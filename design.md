@@ -24,8 +24,9 @@ app/                     The Android app (package app.pitchstone)
   markdown/              commonmark-java in the editor's dialect: Markdown, WikiLinks,
                          PlainText, Html, NoteIndexer, LinkRewriter
   export/                FileNames, ExportPlanner, ExportWriter, DocumentTree (SAF), Importer
-  sync/                  Folder sync: SyncEntries (table, hash), SyncPlanner (pure),
-                         FolderSync (engine), SyncManager (triggers, status, SyncWorker)
+  sync/                  Folder sync: SyncEntries (table, hash), Vault (the folder listed),
+                         SyncPlanner (pure), FolderSync (notes), AttachmentSync,
+                         SyncManager (triggers, status, SyncWorker)
   share/                 Sharing: email/text/file intents
   ui/                    Compose screens: notes (list, drawer), editor (screen, WebView,
                          toolbar, dialogs, view model), export, importer, share, settings,
@@ -243,12 +244,17 @@ Where the two parsers could disagree, the app follows markdown-it:
 and ☐/☑ characters for tasks, whose list items show no bullet (`class="task"` in a document,
 an inline `list-style:none` in email). `PlainText` renders structure without symbols.
 
-## Pictures (attachments)
+## Pictures and other attachments
 
-Pictures are files stored with the notes in `files/attachments/<name>` (`AttachmentStore`), with
-a row each in `attachments` (name unique ignoring case, `orphanedAt`). Notes mention them as
-Obsidian does, by name: `![[name]]` (or `![](path/name)` from imported notes, matched by file
-name). The page loads them from `/attachments/<name>` on its own origin, which
+Attachments are files stored with the notes in `files/attachments/<name>` (`AttachmentStore`,
+at most 100 MB each), with a row each in `attachments` (name unique ignoring case,
+`orphanedAt`). Which files are attachments is `WikiLinks.isAttachment` (pictures, audio, video,
+PDFs, office files, canvases), the one list for import, sync and links (`attachments.ts` has a
+copy). The app adds pictures itself; the rest come by import and sync. Notes mention them as
+Obsidian does, by name: `![[name]]`, `[[report.pdf]]` (or `![](path/name)` from imported notes,
+matched by file name). Following a link to one opens it in a viewer (FileProvider); the page
+marks such a link missing only if no attachment of that name is stored (`NoteNames.attachments`,
+from the `attachments` table as it changes). The page loads them from `/attachments/<name>` on its own origin, which
 `EditorWebView.AttachmentPathHandler` serves (case and folders ignored); `attachments.ts` and
 `views.ts` (`WikilinkView`, `ImageView`) draw image embeds and local image paths as pictures,
 sized by Obsidian's `|300` or `|300x200`, or as a box with the name when missing.
@@ -261,11 +267,12 @@ orientation applied). The app stores the picture (`add`: a unique name, "Pasted 
 with `insertWikilink {embed: true}`. Out: a markdown export adds the pictures its notes
 mention in `attachments/`; an HTML file holds them as data URLs (up to
 `Html.INLINE_TOTAL_BYTES`, 20 MB, in all; the share sheet builds it off the main thread);
-email bodies name them. Import stores the pictures an imported note mentions (`addOrReuse`:
+email bodies name them. Import stores the attachments an imported note mentions (`addOrReuse`:
 identical bytes are reused; a taken name gets a new one and the note's mentions follow, all at
-once with `LinkRewriter.renameAttachments`, so a new name that is another picture's old one is
-not renamed twice). A picture that cannot be stored is reported (`failedPictures`); its note
-is imported. Mentions are found by name, the table-safe `![[pic.png\|200]]` included.
+once with `LinkRewriter.renameAttachments`, so a new name that is another one's old one is
+not renamed twice). One that cannot be stored is reported (`failedAttachments`); its note
+is imported. A pasted picture is at most 25 MB (`MAX_IMAGE_BYTES`, checked by the page before
+it reads the file): it crosses the bridge as base64. Mentions are found by name, the table-safe `![[pic.png\|200]]` included.
 
 Clean-up (`collectAttachmentGarbage`, at start-up at most daily): names mentioned by any note
 (trash included) are read page by page; if some stored names are left, versions are read the
@@ -301,11 +308,21 @@ as they are read since a provider's reported size can be missing; a larger file 
 ## Folder sync
 
 Two-way sync with a folder chosen through SAF (`syncFolderUri`, a persisted tree permission).
-Each note is `Folder/Title.md` whose content is exactly the note's body; pictures the notes
-mention are files there.
+Each note is `Folder/Title.md` whose content is exactly the note's body; the attachments the
+notes link to are files there. `Vault` lists the folder (hidden entries and the folders left
+out skipped); `SyncPlanner` decides; `FolderSync` does the notes' steps, then `AttachmentSync`
+the attachments'.
+
+**Folders left out** (`syncExcluded`, paths in the vault; `Excluded` compares ignoring case):
+not looked into. Pairs inside them are forgotten (a `Forget` step), so both sides stay as they
+are; notes in them are left out of the plan, unless one still has a pair elsewhere: it was
+just moved there in the app, and its file is moved after it (the pair is forgotten at the next
+sync). The other way, a paired file gone from sync is looked for in those folders too
+(`Vault.outside`, listed only then), and a match moves the note after it (Adopt). Taken back
+into sync, a folder's notes and files meet as at a first sync, by natural path.
 
 **Memory.** `sync_entries` holds a row per pair as both sides last agreed: the path (unique
-ignoring case, `NOCASE`), the note id (or, for pictures, the attachment name), the SHA-256 of
+ignoring case, `NOCASE`), the note id (or, for attachments, the attachment's name), the SHA-256 of
 the text (`SyncHash`; files are read as import reads them: BOM dropped, CRLF made LF), and the
 file's time and size. A side changed if its text's hash differs from the row's; a file is only
 read when its time or size moved, or it is new. Choosing another folder clears the table;
@@ -315,8 +332,8 @@ choosing the same one again (after its permission was lost) keeps it.
 there give Record / WriteFile / UpdateNote / MoveFile / Conflict (newer wins by file time
 against `updatedAt`), or, when the note left the app, TrashFile (unchanged file) / RestoreNote
 or Import (changed file). Pairs whose file is gone look for an unpaired file with the same
-text (a rename outside: Adopt) and else give TrashNote, or the file is written again if the
-note changed since. Unpaired files match an unpaired note by natural path (a first sync:
+text (a rename outside: Adopt; only files of the pair's size are read) and else give TrashNote,
+or the file is written again if the note changed since. Unpaired files match an unpaired note by natural path (a first sync:
 Record or Conflict) or are imported; the notes left are written as new files. `pathFor` keeps a
 file's path while it still suits the note (`Title (2).md` from a clash, another case, a name
 spelled with a character `FileNames.safe` replaces), else takes the first free
@@ -338,8 +355,9 @@ up again next time. Guards, each with a test that fails without it:
   where the file is.
 - More than `TRASH_LIMIT` (5) notes losing their files at once are held back
   (`SyncReport.heldBack`) until the user picks `GoneFiles.TRASH_NOTES` or `WRITE_AGAIN`. A
-  folder that lists no markdown file while notes are paired (a card not there, a folder
-  moved) holds back everything, forgetting no pair, until the user picks.
+  folder that lists nothing at all, hidden files included (`Vault.listedNothing`: a card not
+  there, a folder moved), while notes are paired holds back everything, forgetting no pair,
+  until the user picks.
 - Deletions are moves: files to the folder's `.trash` (numbered if the name is taken there),
   notes to the app's trash; the text a conflict does not keep becomes a version
   (`forceRevision`, or `keepVersion` for the file's text, stored before the file is
@@ -350,13 +368,16 @@ up again next time. Guards, each with a test that fails without it:
   rewrites reach their files at the next sync. A file moved or made in a folder goes to the
   app's folder of that file name (`appFolder`: "Q&A: misc" for `Q&A misc`).
 
-Pictures come after the notes: for each picture name a note mentions, one only in the folder
-is stored (`addOrReuse`), one only in the app is written to Obsidian's `attachmentFolderPath`
-(`.obsidian/app.json`: `/`, a folder, or `./…` beside the note), and one changed in the folder
-since its row replaces the app's copy (`AttachmentStore.replace`, an atomic move). Two
-different pictures of one name are both left, reported, and remembered as a clash (the row's
-hash starts `clash:`), so a later change to the folder's copy never replaces the app's; the
-clash ends when the two are the same. Sync never deletes a picture.
+Attachments come after the notes (`AttachmentSync`): for each attachment name a note
+mentions, one only in the folder is stored (`addOrReuse`), one only in the app is written to
+Obsidian's `attachmentFolderPath` (`.obsidian/app.json`: `/`, a folder, or `./…` beside the
+note; nothing is written into a folder left out), and one changed in the folder since its row
+replaces the app's copy (`AttachmentStore.replace`, an atomic move). Of copies in several
+folders, the one synced before is used, else the first by path. Files are hashed as they are
+read, not held in memory. Two different files of one name are both left, reported, and
+remembered as a clash (the row's hash starts `clash:`), so a later change to the folder's copy
+never replaces the app's; the clash ends when the two are the same. Sync never deletes an
+attachment.
 
 **Running** (`SyncManager`, in `AppContainer`): one sync at a time (a mutex). In process: a
 conflated request channel with a 1.5 s debounce, fed when the process comes to the front
@@ -366,7 +387,9 @@ s after the app leaves the front, which keeps the process alive for it (appended
 running, which replacing would cancel). The last report, the last one that changed something,
 and any error are kept in `SharedPreferences` "sync" for Settings (`SyncSection`), which also
 shows the first-sync preview (`FolderSync.preview`: the plan as if nothing were paired), the
-held-back choice, and stop (permission released unless export remembers the same folder).
+held-back choice, the folders left out (`FoldersDialog`, also offered in the preview, which
+then counts without them), and stop (permission released unless export remembers the same
+folder).
 
 `DocumentDir` gained what sync needs: `createFile` returns the new file's handle, `refresh`
 re-reads one entry (listing a folder after each write would make a first sync quadratic over

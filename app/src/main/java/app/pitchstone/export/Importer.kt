@@ -7,7 +7,7 @@ import app.pitchstone.data.NoteTooLargeException
 import app.pitchstone.markdown.LinkRewriter
 import java.io.InputStream
 
-/** A file that can be imported: a note, or a picture notes show. */
+/** A file that can be imported: a note, or an attachment notes link to. */
 data class ImportFile(
     /** The note's title: the file name without its extension. */
     val title: String,
@@ -24,10 +24,10 @@ data class ImportResult(
     val alreadyPresent: Int,
     val failed: List<Pair<String, String>>,
     val skippedLarge: List<String>,
-    /** Pictures the imported notes show, stored with them (new ones only). */
-    val pictures: Int = 0,
-    /** Pictures a note shows that could not be stored (too large, unreadable), and why; the note is imported. */
-    val failedPictures: List<Pair<String, String>> = emptyList(),
+    /** Attachments the imported notes link to, stored with them (new ones only). */
+    val attachments: Int = 0,
+    /** Attachments a note links to that could not be stored (too large, unreadable), and why; the note is imported. */
+    val failedAttachments: List<Pair<String, String>> = emptyList(),
 )
 
 object Importer {
@@ -35,12 +35,12 @@ object Importer {
     /** The largest file imported: a note can hold no more (NoteRepository.MAX_NOTE_BYTES). */
     const val MAX_BYTES = NoteRepository.MAX_NOTE_BYTES.toLong()
 
-    /** Whether [file] becomes a note (rather than a picture a note shows). */
+    /** Whether [file] becomes a note (rather than an attachment a note links to). */
     fun isNote(file: ImportFile): Boolean = file.extension in EXTENSIONS
 
     /**
-     * The importable files in [dir] and its subfolders: notes, and pictures (which are stored
-     * only if an imported note shows them). Hidden folders (".obsidian", ".git", ".trash") are
+     * The importable files in [dir] and its subfolders: notes, and attachments (pictures, PDFs,
+     * audio...: [AttachmentStore.isAttachment], stored only if an imported note links to them). Hidden folders (".obsidian", ".git", ".trash") are
      * skipped, as is anything else.
      */
     fun collect(dir: DocumentDir, folder: String = ""): List<ImportFile> {
@@ -52,7 +52,7 @@ object Importer {
                 continue
             }
             val ext = entry.name.substringAfterLast('.', "").lowercase()
-            if (ext !in EXTENSIONS && ext !in AttachmentStore.IMAGE_EXTENSIONS) continue
+            if (ext !in EXTENSIONS && !AttachmentStore.isAttachment(entry.name)) continue
             out += ImportFile(
                 title = entry.name.substringBeforeLast('.'),
                 extension = ext,
@@ -118,10 +118,10 @@ object Importer {
     private const val ALWAYS_ESCAPED = "\\`*_[]<>|~=^&"
 
     /**
-     * Imports the notes among [files] into [targetFolder], with the pictures among them that
-     * they show, stored in [attachments] (a picture whose name is taken by another one is stored
+     * Imports the notes among [files] into [targetFolder], with the attachments among them that
+     * they link to, stored in [attachments] (one whose name is taken by another one is stored
      * under a new name, and the note's mentions follow). A note that already exists unchanged
-     * (same title, folder and content) is not imported again, and a picture already stored is
+     * (same title, folder and content) is not imported again, and an attachment already stored is
      * not stored twice, so importing twice is harmless. Plain-text files become notes that show
      * their text literally unless [txtAsMarkdown]. [progress] gets the number of notes done.
      */
@@ -140,10 +140,10 @@ object Importer {
         var present = 0
         val failed = ArrayList<Pair<String, String>>()
         val large = ArrayList<String>()
-        val pictures = files.filterNot(::isNote).groupBy { "${it.title}.${it.extension}".lowercase() }
+        val attachmentFiles = files.filterNot(::isNote).groupBy { "${it.title}.${it.extension}".lowercase() }
         val storedAs = HashMap<ImportFile, String>()
-        val pictureFailed = HashMap<ImportFile, String>()
-        var newPictures = 0
+        val attachmentFailed = HashMap<ImportFile, String>()
+        var newAttachments = 0
         val before = attachments?.names()?.map { it.lowercase() }?.toSet().orEmpty()
         files.filter(::isNote).forEachIndexed { i, f ->
             val folder = FolderPaths.normalize(if (keepFolders) FolderPaths.child(targetFolder, f.folder) else targetFolder)
@@ -155,23 +155,23 @@ object Importer {
                     val text = readText(f.open())
                     var body = if (f.extension == "txt" && !txtAsMarkdown) plainTextToMarkdown(text) else text
                     if (attachments != null) {
-                        // Renamed all at once: one picture's new name may be another's old one.
+                        // Renamed all at once: one attachment's new name may be another's old one.
                         val renames = HashMap<String, String>()
                         for (mention in AttachmentStore.mentionedNames(body)) {
-                            // The picture nearest the note: in its folder, else the first found.
-                            val candidates = pictures[mention] ?: continue
-                            val picture = candidates.firstOrNull { it.folder == f.folder } ?: candidates.first()
-                            if (picture in pictureFailed) continue
-                            val fileName = "${picture.title}.${picture.extension}"
-                            // A picture that cannot be stored is reported; the note comes in without it.
-                            val name = storedAs[picture] ?: try {
-                                attachments.addOrReuse(picture.open(), fileName).also {
-                                    storedAs[picture] = it
-                                    if (it.lowercase() !in before) newPictures++
+                            // The file nearest the note: in its folder, else the first found.
+                            val candidates = attachmentFiles[mention] ?: continue
+                            val file = candidates.firstOrNull { it.folder == f.folder } ?: candidates.first()
+                            if (file in attachmentFailed) continue
+                            val fileName = "${file.title}.${file.extension}"
+                            // One that cannot be stored is reported; the note comes in without it.
+                            val name = storedAs[file] ?: try {
+                                attachments.addOrReuse(file.open(), fileName).also {
+                                    storedAs[file] = it
+                                    if (it.lowercase() !in before) newAttachments++
                                 }
                             } catch (e: Exception) {
                                 if (e is kotlinx.coroutines.CancellationException) throw e
-                                pictureFailed[picture] = e.message ?: e.javaClass.simpleName
+                                attachmentFailed[file] = e.message ?: e.javaClass.simpleName
                                 continue
                             }
                             if (!name.equals(fileName, ignoreCase = true)) renames[fileName] = name
@@ -193,7 +193,7 @@ object Importer {
             }
             progress(i + 1)
         }
-        val failedPictures = pictureFailed.map { (f, why) -> (if (f.folder.isEmpty()) "" else "${f.folder}/") + "${f.title}.${f.extension}" to why }
-        return ImportResult(imported, present, failed, large, newPictures, failedPictures)
+        val failedAttachments = attachmentFailed.map { (f, why) -> (if (f.folder.isEmpty()) "" else "${f.folder}/") + "${f.title}.${f.extension}" to why }
+        return ImportResult(imported, present, failed, large, newAttachments, failedAttachments)
     }
 }

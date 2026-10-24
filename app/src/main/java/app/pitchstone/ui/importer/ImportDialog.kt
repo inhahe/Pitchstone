@@ -124,9 +124,9 @@ fun ImportDialog(currentFolder: String, folders: List<String>, onDismiss: () -> 
                 Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     val r = p.result
                     Text("Imported ${r.imported} ${if (r.imported == 1) "note" else "notes"}" +
-                        if (r.pictures > 0) " and ${r.pictures} ${if (r.pictures == 1) "picture" else "pictures"}." else ".")
+                        if (r.attachments > 0) " and ${r.attachments} ${if (r.attachments == 1) "attachment" else "attachments"} (pictures, PDFs...)." else ".")
                     if (r.alreadyPresent > 0) Text("${r.alreadyPresent} were already here unchanged and were not imported again.")
-                    if (p.unsupported > 0) Text("${p.unsupported} chosen ${if (p.unsupported == 1) "file is" else "files are"} not .md, .txt or a picture and ${if (p.unsupported == 1) "was" else "were"} skipped.")
+                    if (p.unsupported > 0) Text("${p.unsupported} chosen ${if (p.unsupported == 1) "file is" else "files are"} not .md, .txt or an attachment (picture, PDF, audio...) and ${if (p.unsupported == 1) "was" else "were"} skipped.")
                     if (r.skippedLarge.isNotEmpty()) {
                         Text("Too large to import (over ${Importer.MAX_BYTES / 1000} KB):", fontWeight = FontWeight.Medium)
                         r.skippedLarge.take(20).forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
@@ -135,9 +135,9 @@ fun ImportDialog(currentFolder: String, folders: List<String>, onDismiss: () -> 
                         Text("Could not read ${r.failed.size}:", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.error)
                         r.failed.take(20).forEach { (name, why) -> Text("• $name: $why", style = MaterialTheme.typography.bodySmall) }
                     }
-                    if (r.failedPictures.isNotEmpty()) {
-                        Text("Pictures not stored (the notes showing them were imported):", fontWeight = FontWeight.Medium)
-                        r.failedPictures.take(20).forEach { (name, why) -> Text("• $name: $why", style = MaterialTheme.typography.bodySmall) }
+                    if (r.failedAttachments.isNotEmpty()) {
+                        Text("Attachments not stored (the notes linking to them were imported):", fontWeight = FontWeight.Medium)
+                        r.failedAttachments.take(20).forEach { (name, why) -> Text("• $name: $why", style = MaterialTheme.typography.bodySmall) }
                     }
                 }
             },
@@ -192,7 +192,7 @@ fun ImportDialog(currentFolder: String, folders: List<String>, onDismiss: () -> 
     }
 }
 
-/** Importable files among picked [uris] (notes and pictures), and how many were neither. */
+/** Importable files among picked [uris] (notes and attachments), and how many were neither. */
 private fun filesFrom(resolver: ContentResolver, uris: List<Uri>): Pair<List<ImportFile>, Int> {
     val files = ArrayList<ImportFile>()
     var unsupported = 0
@@ -209,7 +209,7 @@ private fun filesFrom(resolver: ContentResolver, uris: List<Uri>): Pair<List<Imp
             }
         }
         val ext = name.substringAfterLast('.', "").lowercase()
-        if (ext !in Importer.EXTENSIONS && !AttachmentStore.isImage(name)) {
+        if (ext !in Importer.EXTENSIONS && !AttachmentStore.isAttachment(name)) {
             unsupported++
             continue
         }

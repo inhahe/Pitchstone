@@ -139,15 +139,17 @@ class ExportWriterTest {
     }
 
     @Test
-    fun `importing collects markdown and text, skipping hidden folders`() {
+    fun `importing collects markdown, text and attachments, skipping hidden folders`() {
         File(dir, "a.md").writeText("A")
         File(dir, "b.txt").writeText("B")
-        File(dir, "c.pdf").writeText("C")
+        File(dir, "c.pdf").writeText("C") // an attachment: stored if a note links to it
+        File(dir, "e.exe").writeText("E")
         File(dir, ".obsidian").mkdirs()
         File(dir, ".obsidian/x.md").writeText("hidden")
         File(dir, "Sub").mkdirs()
         File(dir, "Sub/d.markdown").writeText("D")
         val files = Importer.collect(FileDir(dir))
-        assertThat(files.map { it.folder to it.title }).containsExactly("" to "a", "" to "b", "Sub" to "d")
+        assertThat(files.map { it.folder to it.title }).containsExactly("" to "a", "" to "b", "" to "c", "Sub" to "d")
+        assertThat(files.filter(Importer::isNote).map { it.title }).containsExactly("a", "b", "d")
     }
 }

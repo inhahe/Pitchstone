@@ -64,9 +64,9 @@ class FolderSyncTest {
         f.setLastModified(now)
     }
 
-    private suspend fun sync(gone: GoneFiles = GoneFiles.ASK, busy: (Long) -> Boolean = { false }): SyncReport {
+    private suspend fun sync(gone: GoneFiles = GoneFiles.ASK, busy: (Long) -> Boolean = { false }, excluded: Set<String> = emptySet()): SyncReport {
         now += 60_000
-        return engine.sync(FileDir(vault), updateLinks = true, busy = busy, gone = gone)
+        return engine.sync(FileDir(vault), updateLinks = true, excluded = excluded, busy = busy, gone = gone)
     }
 
     private suspend fun note(title: String) = repo.allNotes().single { it.title == title }
@@ -288,7 +288,7 @@ class FolderSyncTest {
         putBytes("img/unused.png", byteArrayOf(7))
 
         val report = sync()
-        assertThat(report.pictures).isEqualTo(2)
+        assertThat(report.attachments).isEqualTo(2)
         assertThat(report.problems).isEmpty()
         assertThat(file("attachments/here.png").readBytes()).isEqualTo(byteArrayOf(1, 2, 3))
         assertThat(store.file("there.png")!!.readBytes()).isEqualTo(byteArrayOf(4, 5, 6))
@@ -298,7 +298,7 @@ class FolderSyncTest {
         putBytes("img/there.png", byteArrayOf(9, 9))
         val changed = sync()
         assertThat(changed.problems).isEmpty()
-        assertThat(changed.pictures).isEqualTo(1)
+        assertThat(changed.attachments).isEqualTo(1)
         assertThat(store.file("there.png")!!.readBytes()).isEqualTo(byteArrayOf(9, 9))
     }
 
@@ -382,6 +382,97 @@ class FolderSyncTest {
         assertThat(file(".trash/B.md").exists()).isTrue()
         assertThat(file("C.md").readText()).isEqualTo("c edited")
         assertThat(vault.list()!!.filter { it.endsWith(".md") }).containsExactly("A.md", "C.md")
+    }
+
+    @Test
+    fun `a folder left out is synced neither way`() = runBlocking<Unit> {
+        val leftOut = setOf("Templates")
+        repo.create("Here", "in sync")
+        repo.create("Daily", "a template in the app", folder = "templates")
+        put("Templates/Weekly.md", "a template in the folder")
+        put("Templates/Sub/Deeper.md", "deeper")
+        sync(excluded = leftOut)
+        assertThat(file("Here.md").exists()).isTrue()
+        assertThat(file("Templates/Daily.md").exists()).isFalse()
+        assertThat(repo.allNotes().map { it.title }).containsExactly("Here", "Daily")
+        assertThat(sync(excluded = leftOut).changes).isEqualTo(0)
+        // Taken back into sync: they meet as at a first sync.
+        sync()
+        assertThat(file("Templates/Daily.md").readText()).isEqualTo("a template in the app")
+        assertThat(note("Weekly").folder).isEqualTo("templates")
+        assertThat(note("Deeper").folder).isEqualTo("templates/Sub")
+    }
+
+    @Test
+    fun `leaving out a folder already synced forgets its notes' pairs, and trashes nothing`() = runBlocking<Unit> {
+        val id = repo.create("Old", "kept", folder = "Archive")
+        sync()
+        assertThat(file("Archive/Old.md").exists()).isTrue()
+        val report = sync(excluded = setOf("archive"))
+        assertThat(report.trashedNotes + report.trashedFiles + report.heldBack).isEqualTo(0)
+        assertThat(db.sync().all().map { it.path }).doesNotContain("Archive/Old.md")
+        // Changes on either side stay there.
+        put("Archive/Old.md", "changed outside")
+        repo.save(id, "Old", "changed here")
+        assertThat(sync(excluded = setOf("Archive")).changes).isEqualTo(0)
+        assertThat(repo.note(id)!!.body).isEqualTo("changed here")
+        assertThat(file("Archive/Old.md").readText()).isEqualTo("changed outside")
+    }
+
+    @Test
+    fun `a note moved into a folder left out takes its file along, and is left alone there`() = runBlocking<Unit> {
+        val leftOut = setOf("Archive")
+        val id = repo.create("Done", "finished")
+        sync(excluded = leftOut)
+        repo.move(listOf(id), "Archive")
+        sync(excluded = leftOut)
+        assertThat(file("Done.md").exists()).isFalse()
+        assertThat(file("Archive/Done.md").readText()).isEqualTo("finished")
+        sync(excluded = leftOut)
+        repo.save(id, "Done", "edited later")
+        sync(excluded = leftOut)
+        assertThat(file("Archive/Done.md").readText()).isEqualTo("finished")
+        assertThat(repo.note(id)!!.trashedAt).isNull()
+    }
+
+    @Test
+    fun `a file moved into a folder left out takes its note along, not to the trash`() = runBlocking<Unit> {
+        val leftOut = setOf("Archive")
+        val id = repo.create("Done", "finished")
+        sync(excluded = leftOut)
+        File(vault, "Archive").mkdirs()
+        assertThat(file("Done.md").renameTo(file("Archive/Done.md"))).isTrue()
+        val report = sync(excluded = leftOut)
+        assertThat(report.trashedNotes).isEqualTo(0)
+        assertThat(repo.note(id)!!.trashedAt).isNull()
+        assertThat(repo.note(id)!!.folder).isEqualTo("Archive")
+        assertThat(sync(excluded = leftOut).changes).isEqualTo(0)
+    }
+
+    @Test
+    fun `attachments of any kind notes link to are synced, outside folders left out`() = runBlocking<Unit> {
+        put(".obsidian/app.json", """{"attachmentFolderPath": "files"}""")
+        val talk = store.add(byteArrayOf(1, 2).inputStream(), "talk.m4a")
+        repo.create("Listen", "[[$talk]]")
+        put("Read.md", "[[report.pdf]] and [[old.pdf]] and ![[clip.mp4]]")
+        putBytes("docs/report.pdf", byteArrayOf(3))
+        putBytes("Archive/old.pdf", byteArrayOf(4))
+        putBytes("clip.mp4", byteArrayOf(5))
+        val report = sync(excluded = setOf("Archive"))
+        assertThat(report.problems).isEmpty()
+        assertThat(report.attachments).isEqualTo(3)
+        assertThat(file("files/talk.m4a").readBytes()).isEqualTo(byteArrayOf(1, 2))
+        assertThat(store.file("report.pdf")!!.readBytes()).isEqualTo(byteArrayOf(3))
+        assertThat(store.file("clip.mp4")!!.readBytes()).isEqualTo(byteArrayOf(5))
+        assertThat(store.file("old.pdf")).isNull()
+    }
+
+    @Test
+    fun `the folders of the synced folder are listed for leaving out, hidden ones not`() = runBlocking<Unit> {
+        put(".obsidian/app.json", "{}")
+        put("B/Inner/x.md", "x")
+        put("a/y.md", "y")
+        assertThat(engine.folders(FileDir(vault))).containsExactly("a", "B", "B/Inner").inOrder()
     }
 
     @Test

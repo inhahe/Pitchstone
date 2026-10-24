@@ -55,6 +55,9 @@ and stores each note as markdown.
   wide. Tap a picture, then Open, to see it full size. Large photos are made at most 2560
   pixels on their long side (Settings → Shrink large photos), and HEIC photos become JPEG.
   A picture no note or version uses any more is deleted after 30 days.
+- **Other attachments**: a link to a PDF, a recording, a video, an office file or a canvas
+  (`[[report.pdf]]`) opens it in a viewer, if it came in with an import or a folder sync. Such
+  a link is shown dimmed, like a link to a missing note, while the file is not stored.
 - The title of a new note has the keyboard; Enter moves on to the text.
 
 ## Organising
@@ -99,7 +102,7 @@ From the list (⋮ → Export these notes…, or select notes → export icon), 
   `.txt` you can also keep the markdown symbols.
 - **Files**: one file per note, named after its title, with the note folders recreated as
   subfolders (optional); or all notes in one file, each under its title. A Markdown export also
-  writes the pictures the notes show into an `attachments` folder.
+  writes the pictures and other attachments the notes link to into an `attachments` folder.
 - **Options**: start each file with the title as a heading; add created/modified dates and tags
   as front matter (Markdown).
 - **If a file already exists**: keep both (adds a number), replace it, or skip that note. Two
@@ -123,9 +126,10 @@ The share icon in a note offers:
 Drawer → Import notes…: import a whole folder (an Obsidian vault works; its hidden `.obsidian`
 folder is skipped) or chosen files. `.md` files are read as markdown; `.txt` files are kept as
 plain text by default (their symbols stay literal), or read as markdown if you choose. Folder
-structure can be kept. The pictures the imported notes show come along (a picture whose name
-is already taken by a different one gets a new name, and the note follows). Importing the same
-files again does not create duplicates.
+structure can be kept. The pictures and other attachments the imported notes link to (PDFs,
+recordings, videos, office files, canvases; up to 100 MB each) come along, one whose name is
+already taken by a different file getting a new name, which the note follows. Importing the
+same files again does not create duplicates.
 
 Text shared to Pitchstone from another app becomes a new note, and markdown files opened with
 Pitchstone are imported.
@@ -140,10 +144,15 @@ No more exporting and importing by hand.
   many notes it will write to the folder, how many files will become notes, and how many are in
   both (and how many of those differ: the newer text is kept, the other goes to the note's
   version history). Nothing is deleted.
-- **One file per note**: `Folder/Title.md`, holding exactly the note's text. The pictures notes
-  show are files there too, where Obsidian's "Default location for new attachments" says (at
-  the top otherwise). Hidden folders (`.obsidian`, `.trash`, `.git`) are left alone, as are
-  files other than `.md` files and pictures.
+- **One file per note**: `Folder/Title.md`, holding exactly the note's text. The files notes
+  link to (pictures, PDFs, recordings, videos, office files, canvases) are there too, where
+  Obsidian's "Default location for new attachments" says (at the top otherwise). Hidden
+  folders (`.obsidian`, `.trash`, `.git`) are left alone, as are files no note links to.
+- **Folders left out**: choose folders of the vault to leave out of sync (Templates, an old
+  Archive), in the first-sync dialog or later in Settings. Their notes stay as they are on both
+  sides, and are not kept in step. A note moved into one, here or in the vault, is moved on the
+  other side too, and left alone from then on; nothing is trashed for it. Taken back into sync,
+  a folder's notes and files meet as at a first sync.
 - **When**: as Pitchstone comes to the front, a few seconds after it leaves it or a note is
   closed, about every 15 minutes in the background, and when you tap Sync now.
 - **Changes** on either side reach the other: edits, renames (a renamed file renames its note,
@@ -156,7 +165,7 @@ No more exporting and importing by hand.
   deleted in Pitchstone sends its file to the folder's `.trash` (Obsidian's trash). If the files
   of more than 5 notes vanish at once (a folder emptied by mistake, a memory card not there),
   nothing is trashed until you choose in Settings: move those notes to the trash, or write
-  their files again. Pictures are never deleted by a sync.
+  their files again. Attachments are never deleted by a sync.
 - **Settings** shows when the last sync ran and what it did, and lists files that could not be
   synced (too large for a note, unreadable); those are tried again at the next sync.
 - **Stop syncing** leaves the notes and the files as they are. **Change folder** starts afresh

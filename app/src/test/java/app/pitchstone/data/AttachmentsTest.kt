@@ -185,7 +185,7 @@ class AttachmentsTest {
         val result = Importer.import(repo, files, "", keepFolders = true, txtAsMarkdown = false, attachments = store)
         assertThat(result.imported).isEqualTo(1)
         assertThat(result.failed).isEmpty()
-        assertThat(result.failedPictures.single().first).isEqualTo("huge.png")
+        assertThat(result.failedAttachments.single().first).isEqualTo("huge.png")
         assertThat(repo.allNotes().single().body).isEqualTo("![[huge.png]] text")
     }
 
@@ -213,7 +213,7 @@ class AttachmentsTest {
         )
         val first = Importer.import(repo, vault, "", keepFolders = true, txtAsMarkdown = false, attachments = store)
         assertThat(first.imported).isEqualTo(1)
-        assertThat(first.pictures).isEqualTo(2)
+        assertThat(first.attachments).isEqualTo(2)
         val pets = repo.allNotes().single()
         assertThat(pets.body).isEqualTo("My ![[cat 1.png]] and ![](att/dog.png)")
         assertThat(store.file("cat 1.png")!!.readText()).isEqualTo("CAT")
@@ -221,7 +221,7 @@ class AttachmentsTest {
         val again = Importer.import(repo, vault, "", keepFolders = true, txtAsMarkdown = false, attachments = store)
         assertThat(again.imported).isEqualTo(0)
         assertThat(again.alreadyPresent).isEqualTo(1)
-        assertThat(again.pictures).isEqualTo(0)
+        assertThat(again.attachments).isEqualTo(0)
         assertThat(store.names()).hasSize(3)
     }
 

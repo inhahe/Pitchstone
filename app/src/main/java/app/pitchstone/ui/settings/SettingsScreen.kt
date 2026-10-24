@@ -79,7 +79,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             ) { v -> update { it.copy(shrinkLargePhotos = v) } }
 
             Section("Sync with a folder")
-            SyncSection(s.syncFolderUri)
+            SyncSection(s.syncFolderUri, s.syncExcluded)
 
             Section("Text")
             var size by remember(s.fontSize) { mutableFloatStateOf(s.fontSize.toFloat()) }

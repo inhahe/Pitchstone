@@ -5,7 +5,7 @@ import type {Node} from 'prosemirror-model'
 import {Plugin, PluginKey, type EditorState, type Transaction} from 'prosemirror-state'
 import {Decoration, DecorationSet} from 'prosemirror-view'
 import {schema} from '../schema'
-import {isImageName} from './attachments'
+import {attachmentKey, isAttachmentName, isImageName} from './attachments'
 import {noteExists, wikilinkNote} from './links'
 
 const {nodes, marks} = schema
@@ -22,6 +22,8 @@ export interface DecorationState {
   content: DecorationSet
   /** The app's lookup keys of every note (see noteExists). */
   keys: Set<string>
+  /** The stored attachments' names, lower-cased (attachmentKey). */
+  attachments: Set<string>
   query: string
   current: number
   matches: {from: number; to: number}[]
@@ -29,7 +31,23 @@ export interface DecorationState {
 
 export const decorationsKey = new PluginKey<DecorationState>('pitchstone-decorations')
 
-type Meta = {keys?: string[]; query?: string; current?: number}
+type Meta = {keys?: string[]; attachments?: string[]; query?: string; current?: number}
+
+/** What exists: notes by their lookup keys, attachments by name. */
+interface Known {
+  keys: ReadonlySet<string>
+  attachments: ReadonlySet<string>
+}
+
+/** Whether the wikilink `node` leads nowhere: to no note, or to an attachment not stored. */
+function isMissing(node: Node, known: Known): boolean {
+  const name = wikilinkNote(node.attrs.target)
+  // An embedded image is a file, not a note: it shows the picture, or a box when missing.
+  if (node.attrs.embed && isImageName(name)) return false
+  if (noteExists(known.keys, node.attrs.target)) return false
+  // A PDF, a recording: a file stored with the notes, opened in a viewer.
+  return !(isAttachmentName(name) && known.attachments.has(attachmentKey(name)))
+}
 
 /**
  * Lower-cases `s` one UTF-16 unit at a time, leaving a character whose lower case is longer
@@ -73,12 +91,11 @@ function findMatches(doc: Node, query: string): {from: number; to: number}[] {
 }
 
 /** Adds the decorations of the textblock `block` at `pos` to `out`: tags, bare URLs, links to missing notes. */
-function blockDecorations(block: Node, pos: number, keys: ReadonlySet<string>, out: Decoration[]): void {
+function blockDecorations(block: Node, pos: number, known: Known, out: Decoration[]): void {
   if (block.type === nodes.code_block || block.type === nodes.frontmatter) return
   block.forEach((node, offset) => {
     const at = pos + 1 + offset
-    // An embedded image is a file, not a note: it shows the picture, or a box when missing.
-    if (node.type === nodes.wikilink && !(node.attrs.embed && isImageName(wikilinkNote(node.attrs.target))) && !noteExists(keys, node.attrs.target)) {
+    if (node.type === nodes.wikilink && isMissing(node, known)) {
       out.push(Decoration.node(at, at + node.nodeSize, {class: 'missing'}))
     }
     if (!node.isText || marks.code.isInSet(node.marks)) return
@@ -98,11 +115,11 @@ function blockDecorations(block: Node, pos: number, keys: ReadonlySet<string>, o
 }
 
 /** The tags, bare URLs and missing-note links of the whole document. */
-function contentDecorations(doc: Node, keys: ReadonlySet<string>): DecorationSet {
+function contentDecorations(doc: Node, known: Known): DecorationSet {
   const out: Decoration[] = []
   doc.descendants((node, pos) => {
     if (!node.isTextblock) return true
-    blockDecorations(node, pos, keys, out)
+    blockDecorations(node, pos, known, out)
     return false
   })
   return DecorationSet.create(doc, out)
@@ -112,7 +129,7 @@ function contentDecorations(doc: Node, keys: ReadonlySet<string>): DecorationSet
  * `set` (from contentDecorations) after `tr`: mapped, with the textblocks the transaction
  * touched decorated afresh. Typing in a long note so costs a block, not the whole document.
  */
-function updateContent(set: DecorationSet, tr: Transaction, keys: ReadonlySet<string>): DecorationSet {
+function updateContent(set: DecorationSet, tr: Transaction, known: Known): DecorationSet {
   const doc = tr.doc
   let next = set.map(tr.mapping, doc)
   const touched: [number, number][] = []
@@ -130,7 +147,7 @@ function updateContent(set: DecorationSet, tr: Transaction, keys: ReadonlySet<st
       if (!done.has(pos)) {
         done.add(pos)
         next = next.remove(next.find(pos, pos + node.nodeSize))
-        blockDecorations(node, pos, keys, out)
+        blockDecorations(node, pos, known, out)
       }
       return false
     })
@@ -156,24 +173,26 @@ export function decorationsPlugin(): Plugin<DecorationState> {
     key: decorationsKey,
     state: {
       init(_config, state) {
-        const content = contentDecorations(state.doc, new Set())
-        return {decos: withExtras(state.doc, content, [], 0), content, keys: new Set(), query: '', current: 0, matches: []}
+        const content = contentDecorations(state.doc, {keys: new Set(), attachments: new Set()})
+        return {decos: withExtras(state.doc, content, [], 0), content, keys: new Set(), attachments: new Set(), query: '', current: 0, matches: []}
       },
       apply(tr, prev, _old, state) {
         const meta = tr.getMeta(decorationsKey) as Meta | undefined
         if (!tr.docChanged && !meta) return prev
         const keys = meta?.keys ? new Set(meta.keys) : prev.keys
-        const content = meta?.keys
-          ? contentDecorations(state.doc, keys)
+        const attachments = meta?.attachments ? new Set(meta.attachments) : prev.attachments
+        const known = {keys, attachments}
+        const content = meta?.keys || meta?.attachments
+          ? contentDecorations(state.doc, known)
           : tr.docChanged
-            ? updateContent(prev.content, tr, keys)
+            ? updateContent(prev.content, tr, known)
             : prev.content
         const query = meta?.query ?? prev.query
         const matches = findMatches(state.doc, query)
         let current = meta?.current ?? (meta?.query !== undefined ? 0 : prev.current)
         if (matches.length) current = ((current % matches.length) + matches.length) % matches.length
         else current = 0
-        return {decos: withExtras(state.doc, content, matches, current), content, keys, query, current, matches}
+        return {decos: withExtras(state.doc, content, matches, current), content, keys, attachments, query, current, matches}
       },
     },
     props: {
