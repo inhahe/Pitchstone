@@ -19,7 +19,9 @@
   paragraphs, so reopening the note shows the two as paragraphs: the gap between them is then
   the (smaller) paragraph gap rather than a full empty line. A `\` line would keep it, but
   Obsidian shows that backslash. In a list item the empty line stays a line break (`\`), since
-  a blank line there would loosen the whole list.
+  a blank line there would loosen the whole list; in a quote or footnote, which hold no extra
+  blank lines, a second empty line in a row does. Making a line in a quote a heading or list
+  drops the extra empty lines just above it: they would have to start a line of the new block.
 - **A `---` line inside the front matter** (Properties) ends it when the note is saved: YAML
   front matter cannot contain such a line. The lines after it become part of the note's text
   (nothing is lost, and the editor warns that the note could not be saved exactly).

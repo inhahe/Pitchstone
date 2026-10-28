@@ -25,7 +25,7 @@ import {
   clearFormattingCommand,
   codeBlockCommand,
   currentLink,
-  enterInTable,
+  enterCommand,
   hardBreakCommand,
   headingCommand,
   horizontalRuleCommand,
@@ -37,14 +37,13 @@ import {
   outdentCommand,
   removeLinkCommand,
   setLinkCommand,
-  splitItemCommand,
   tableCommands,
 } from './commands'
 import {decorationState, decorationsKey, decorationsPlugin} from './decorations'
 import {anchorPosition} from './links'
 import {structurePlugin, toolbarPlugin} from './plugins'
-import {backspaceToLineBreak, deleteToLineBreak, enterNewLine} from './lines'
-import {enterShortcut, markdownInputRules} from './rules'
+import {backspaceToLineBreak, deleteToLineBreak} from './lines'
+import {markdownInputRules} from './rules'
 import {applySettings, type EditorSettings, settings} from './settings'
 import {suggestPlugin} from './suggest'
 import {ImageView, ListItemView, WikilinkView} from './views'
@@ -262,7 +261,7 @@ export class PitchstoneEditor {
             return true
           },
           // A new line in a paragraph, as in Obsidian (lines.ts); a list item, a cell below.
-          Enter: chainCommands(enterShortcut, enterInTable, splitItemCommand, enterNewLine),
+          Enter: enterCommand,
           'Shift-Enter': hardBreakCommand,
           Backspace: chainCommands(undoInputRule, backspaceAtStart, backspaceToLineBreak),
           Delete: deleteToLineBreak,

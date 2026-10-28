@@ -1,6 +1,6 @@
 // Editing commands behind the toolbar and the keymap.
 
-import {chainCommands, exitCode, lift, setBlockType, wrapIn} from 'prosemirror-commands'
+import {baseKeymap, chainCommands, exitCode, lift, setBlockType, wrapIn} from 'prosemirror-commands'
 import {redo, undo} from 'prosemirror-history'
 import {Fragment, type Mark, type Node, type NodeType, type ResolvedPos} from 'prosemirror-model'
 import {liftListItem, sinkListItem, splitListItem, wrapInList} from 'prosemirror-schema-list'
@@ -17,7 +17,19 @@ import {
   TableMap,
 } from 'prosemirror-tables'
 import {atomMarkdown} from '../markdown/serialize'
-import {append, flattenBreaks, onLines, splitAfterLine} from './lines'
+import {
+  append,
+  atomsToText,
+  enterNewLine,
+  enterReplacing,
+  flattenBreaks,
+  isMarkdownAtom,
+  onLines,
+  selectionEnd,
+  splitAfterLine,
+  splitOffEmptyLine,
+} from './lines'
+import {enterShortcut} from './rules'
 import {schema} from '../schema'
 
 const {nodes, marks} = schema
@@ -140,27 +152,6 @@ export const blockquoteCommand: Command = onLines((state, dispatch) => {
   return wrapIn(nodes.blockquote)(state, dispatch)
 })
 
-/** Whether `node` is an inline atom with markdown of its own (not text, not a line break). */
-const isMarkdownAtom = (node: Node) => node.isInline && node.isAtom && !node.isText && node.type !== nodes.hard_break
-
-/**
- * Replaces the inline atoms (links to notes, images, footnote references, inline HTML) of the
- * textblocks touching `from`..`to` that are about to become code blocks with their markdown,
- * as text: a code block holds only text, and the atoms would otherwise vanish. Textblocks
- * that cannot become one (table cells) keep theirs, as setBlockType leaves them be.
- */
-function atomsToText(tr: Transaction, from: number, to: number): void {
-  const atoms: {pos: number; node: Node}[] = []
-  tr.doc.nodesBetween(from, to, (node, pos, parent, index) => {
-    if (!node.isTextblock) return true
-    if (!parent || !parent.canReplaceWith(index, index + 1, nodes.code_block)) return false
-    node.forEach((child, offset) => {
-      if (isMarkdownAtom(child)) atoms.push({pos: pos + 1 + offset, node: child})
-    })
-    return false
-  })
-  for (const {pos, node} of atoms.reverse()) tr.replaceWith(pos, pos + node.nodeSize, schema.text(atomMarkdown(node), node.marks))
-}
 
 /**
  * Toggles a code block. Several selected paragraphs become one code block, one line each;
@@ -223,22 +214,27 @@ export const codeBlockCommand: Command = onLines((state, dispatch) => {
 })
 
 /**
- * A horizontal rule after the line the selection ends on (not one it only reaches the start of,
- * as in onLines): in a paragraph at the top level, the lines after it go below the rule;
- * elsewhere (a quote, a list) the rule goes after that whole block.
+ * A horizontal rule after the line the selection ends on (selectionEnd): in a paragraph at the
+ * top level, the lines after it go below the rule, and an empty line there becomes the rule;
+ * elsewhere (a quote, a list) the rule goes after that whole block. At the end of the note, a
+ * paragraph follows it for the cursor.
  */
 export const horizontalRuleCommand: Command = (state, dispatch) => {
-  const sel = state.selection
-  const $end = state.doc.resolve(!sel.empty && sel.$to.nodeBefore?.type === nodes.hard_break ? sel.to - 1 : sel.to)
+  const $end = state.doc.resolve(selectionEnd(state))
   if (dispatch) {
     const tr = state.tr
-    const between = $end.depth === 1 ? splitAfterLine(tr, $end.pos) : null
-    const after = between ?? ($end.depth === 0 ? $end.pos : tr.mapping.map($end.after(1)))
-    const atEnd = between === null && $end.index(0) === state.doc.childCount - 1
-    const insert = atEnd ? [nodes.horizontal_rule.create(), nodes.paragraph.create()] : [nodes.horizontal_rule.create()]
-    tr.insert(after, insert)
-    const target = Math.min(after + 2, tr.doc.content.size)
-    tr.setSelection(TextSelection.near(tr.doc.resolve(target)))
+    const top = $end.depth === 1
+    const emptyLine = top ? splitOffEmptyLine(tr, $end.pos) : null
+    let at: number
+    if (emptyLine !== null) {
+      tr.delete(emptyLine, emptyLine + 2)
+      at = emptyLine
+    } else {
+      at = (top ? splitAfterLine(tr, $end.pos) : null) ?? ($end.depth === 0 ? $end.pos : tr.mapping.map($end.after(1)))
+    }
+    const rule = nodes.horizontal_rule.create()
+    tr.insert(at, at === tr.doc.content.size ? [rule, nodes.paragraph.create()] : rule)
+    tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(at + 2, tr.doc.content.size))))
     dispatch(tr.scrollIntoView())
   }
   return true
@@ -456,6 +452,15 @@ export const splitItemCommand: Command = (state, dispatch) => {
   const attrs = item && item.node.attrs.checked !== null ? {checked: false} : undefined
   return splitListItem(nodes.list_item, attrs)(state, dispatch)
 }
+
+/**
+ * The Enter key: a markdown shortcut ending its line, the cell below in a table, a new item in
+ * a list, a new line in a paragraph (lines.ts), else ProseMirror's own (a new line in code, a
+ * new paragraph); with the selection out of the way first (enterReplacing).
+ */
+export const enterCommand: Command = enterReplacing(
+  chainCommands(enterShortcut, enterInTable, splitItemCommand, enterNewLine, baseKeymap.Enter),
+)
 
 export const hardBreakCommand: Command = chainCommands(exitCode, (state, dispatch) => {
   const {$from} = state.selection

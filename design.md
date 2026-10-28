@@ -61,9 +61,12 @@ The editor's document model is not markdown, so two directions must agree:
   trailing hard breaks dropped, empty paragraphs inside lists/quotes dropped, table header row
   fixed, invalid URLs unlinked...). `exact: false` reports a contract violation (a bug); the
   page warns once. A paragraph's empty lines (runs of hard breaks) are written as blank lines,
-  as Obsidian has them, not as `\` lines (`paragraphsOfLines`): the lines either side of one
-  become paragraphs, each further empty line between them a spacer, and so does each leading
-  one. A list item's paragraphs keep them as breaks, since a blank line would loosen the list.
+  as Obsidian has them, not as `\` lines (`readRun`, `paragraphsOfLines`): the lines either
+  side of one become paragraphs, and at the top level each further empty line between them is a
+  spacer, and so is each leading one. A quote or footnote holds no extra blank lines, so there
+  those stay `\` lines; a list item's paragraphs keep all of them as breaks, since a blank line
+  would loosen the list. Empty lines ending a paragraph are not written. The split paragraphs
+  are cached per source paragraph, so that their renderings stay cached across saves.
 
 Escaping is minimal-first and verified. Each paragraph/heading/cell is rendered with as few
 backslashes as heuristics allow (level 0), parsed back with the real parser as a block, and
@@ -99,19 +102,24 @@ documents pass.
   Delete at the end of one, turn the blank line between back into a line break. What acts a line
   at a time first makes the selected lines paragraphs of their own (`onLines`, `splitLines`):
   the toolbar's heading, list, quote and code block, and Enter's fence shortcut; a selection
-  that only reaches a line's start leaves that line out. The divider goes after the line the
-  selection ends on, splitting off only what follows it (`splitAfterLine`); `---` then Enter
+  that only reaches the start of a line (or of a textblock) leaves that line out
+  (`selectionEnd`). The divider goes after the line the selection ends on, splitting off only
+  what follows it (`splitAfterLine`), and on an empty line takes its place; `---` then Enter
   puts the cursor on a new line under the rule, before the lines that followed. Each block
   input rule is a `blockRule`, matching at the start of a textblock or after a line break
   (U+FFFC in the text rules see); after a break it splits the line off on both sides before
   applying, and a numbered list starts there only from 1, since in CommonMark only that
-  interrupts a paragraph. Every split turns a run of line breaks into what the serializer
-  reads it as (`splitAtBreaks`: a paragraph break, plus a spacer per further empty line, and
-  at a paragraph's end nothing), and Enter on an empty line does the same with one empty line
-  more, so each Enter adds one newline to the file and the editor never shows an empty line
-  the file lacks. The command runs on an intermediate state built without plugins, so no
-  `appendTransaction` sees the half-done split. Paragraphs in list items keep Enter as a new
-  item, are not split, and a shortcut typed after a line break in one stays text.
+  interrupts a paragraph. The code block shortcut keeps inline atoms as their markdown, as the
+  toolbar's does. Every split turns a run of line breaks into what the serializer reads it as
+  (`splitAtRun` by `readRun`; a lone line break is split all the same), and Enter on an empty
+  line does the same with one empty line more, so each Enter adds one newline to the file and
+  the editor shows no empty line the file lacks. Line breaks a quote keeps stay only before
+  lines that are not being made blocks. The command runs on an intermediate state built
+  without plugins, so no `appendTransaction` sees the half-done split. Paragraphs in list items
+  keep Enter as a new item, are not split, and a shortcut typed after a line break in one stays
+  text. The Enter key is `enterCommand` (commands.ts): with a selection over blocks it deletes
+  that first and runs the whole chain where it was, and with a picture or link to a note
+  selected it runs at the cursor before it.
 - **Clipboard**: copy gives markdown (shortcuts on) or plain text; pasted plain text is parsed
   as markdown only with shortcuts on.
 - **Plugins**: decorations (tags, bare URLs, missing-note links, find matches, placeholder;

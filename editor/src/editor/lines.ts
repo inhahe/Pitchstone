@@ -3,16 +3,17 @@
 // may hold several lines, and what acts a line at a time (a markdown shortcut typed at a line's
 // start, the toolbar's block buttons) first makes its lines paragraphs of their own.
 //
-// An empty line in a paragraph is a blank line in the markdown (paragraphsOfLines in
-// serialize.ts). Lines are split off the way the file reads them, so that a split changes the
-// file only by the blank line it puts between the lines it separates, and each Enter adds one
-// newline to it.
+// An empty line in a paragraph is a blank line in the markdown, and lines are split off by the
+// same reading the serializer writes them with (readRun), so that a split changes the file only
+// by the blank line it puts between the lines it separates, each Enter adds one newline to it,
+// and the editor shows no empty line the file lacks.
 
 import {liftEmptyBlock} from 'prosemirror-commands'
 import {InputRule} from 'prosemirror-inputrules'
 import {type Attrs, Fragment, type Node, type NodeType, type ResolvedPos, Slice} from 'prosemirror-model'
 import {type Command, EditorState, NodeSelection, Selection, TextSelection, type Transaction} from 'prosemirror-state'
 import {canJoin, findWrapping} from 'prosemirror-transform'
+import {atomMarkdown, readRun} from '../markdown/serialize'
 import {schema} from '../schema'
 
 const {nodes} = schema
@@ -38,24 +39,6 @@ function breaksToParagraphs(tr: Transaction, from: number, to: number, empty: nu
   tr.replace(from, to, new Slice(Fragment.from(parts), 1, 1))
 }
 
-/**
- * Splits a paragraph at the run of line breaks `from`..`to`, as the markdown reads the empty
- * lines in it: a paragraph break, then an empty paragraph for each further empty line, and for
- * each one the paragraph starts with. Without lines after it (`linesAfter` false), at the end of
- * the paragraph, the run is not written to the file, and just goes. Returns where the lines
- * after the run start (`from`, without any).
- */
-function splitAtBreaks(tr: Transaction, from: number, to: number, linesAfter: boolean): number {
-  if (!linesAfter) {
-    tr.delete(from, to)
-    return from
-  }
-  const k = to - from
-  const empty = from === tr.doc.resolve(from).start() ? k - 1 : Math.max(0, k - 2)
-  breaksToParagraphs(tr, from, to, empty)
-  return from + 2 + 2 * empty
-}
-
 /** Where the run of line breaks ending at `pos` starts. */
 function runStart(doc: Node, pos: number): number {
   while (isBreak(doc.nodeAt(pos - 1))) pos--
@@ -68,48 +51,114 @@ function runEnd(doc: Node, pos: number): number {
   return pos
 }
 
+/** A run of line breaks to split a paragraph at, as found before any split. */
+interface Run {
+  from: number
+  to: number
+  /** No line before it (it starts the paragraph); no line after it (it ends it). */
+  leading: boolean
+  trailing: boolean
+  /** In a top-level paragraph, where markdown keeps extra blank lines as spacers. */
+  spacers: boolean
+  /** Whether line breaks the reading keeps may stay, at the start of the lines after. */
+  keep: boolean
+}
+
 /**
- * Makes the lines touching `from`..`to` paragraphs of their own: the line breaks between them,
- * and the runs of them before and after, become paragraph breaks (see splitAtBreaks). Returns
- * where a position in those lines is afterwards (one at a line's start goes to the start of its
- * paragraph), or null if no line was split off.
+ * The run `from`..`to` in `doc`. A line being split off (`lineBefore`, `lineAfter`) counts as a
+ * line next to it even when empty; line breaks the reading keeps stay only if `keep`.
+ */
+function run(doc: Node, from: number, to: number, opts: {lineBefore?: boolean; lineAfter?: boolean; keep?: boolean}): Run {
+  const $from = doc.resolve(from)
+  return {
+    from,
+    to,
+    leading: !opts.lineBefore && from === $from.start(),
+    trailing: !opts.lineAfter && to === $from.end(),
+    spacers: $from.depth === 1,
+    keep: !!opts.keep,
+  }
+}
+
+/**
+ * Splits a paragraph at `r` as markdown reads the run (readRun). A lone line break, which it
+ * reads as a line break, becomes a paragraph break all the same: splitting is the point.
+ * Returns where the lines after the run start.
+ */
+function splitAtRun(tr: Transaction, r: Run): number {
+  const k = r.to - r.from
+  const reading = readRun(k, r.leading, r.trailing, r.spacers)
+  let {split, cut} = reading
+  if (!split && !r.leading && !r.trailing) {
+    split = true
+    cut = k
+  }
+  // Kept line breaks would otherwise start a line about to become another block.
+  if (!r.keep) cut = k
+  if (!split) {
+    tr.delete(r.from, r.from + cut)
+    return r.to - cut
+  }
+  breaksToParagraphs(tr, r.from, r.from + cut, reading.empty)
+  return r.to - cut + 2 + 2 * reading.empty
+}
+
+/**
+ * Makes the lines touching `from`..`to` paragraphs of their own: the runs of line breaks between
+ * them, before them and after them are split at (splitAtRun). Returns where a position in those
+ * lines is afterwards (one at a line's start goes to the start of its paragraph), or null if no
+ * line was split off.
  */
 function splitLines(tr: Transaction, from: number, to: number): ((pos: number) => number) | null {
-  const runs: {from: number; to: number; linesAfter: boolean}[] = []
-  tr.doc.nodesBetween(from, to, (node, pos) => {
+  const doc = tr.doc
+  const runs: Run[] = []
+  doc.nodesBetween(from, to, (node, pos) => {
     if (!node.isTextblock) return true
     const start = pos + 1
-    if (!splittable(tr.doc.resolve(start))) return false
-    const end = start + node.content.size
+    if (!splittable(doc.resolve(start))) return false
     const lo = Math.max(from, start)
-    const hi = Math.min(to, end)
+    const hi = Math.min(to, start + node.content.size)
     let before = -1
     let after = -1
+    const within: number[] = []
     node.forEach((child, offset) => {
       if (child.type !== nodes.hard_break) return
       const at = start + offset
       if (at < lo) before = at
-      else if (at < hi) {
-        // Between two of the lines: a run of its own, or one more in the run before it.
-        const last = runs[runs.length - 1]
-        if (last && last.to === at && last.from >= lo) last.to++
-        else runs.push({from: at, to: at + 1, linesAfter: true})
-      } else if (after < 0) after = at
+      else if (at < hi) within.push(at)
+      else if (after < 0) after = at
     })
-    if (before >= 0) runs.push({from: runStart(tr.doc, before), to: before + 1, linesAfter: true})
-    if (after >= 0) {
-      const runTo = runEnd(tr.doc, after)
-      runs.push({from: after, to: runTo, linesAfter: runTo < end})
+    if (before >= 0) runs.push(run(doc, runStart(doc, before), before + 1, {lineAfter: true}))
+    // Between two of the lines; an empty line at the paragraph's end goes, as in the file.
+    for (let i = 0, j = 1; i < within.length; i = j++) {
+      while (j < within.length && within[j] === within[j - 1] + 1) j++
+      runs.push(run(doc, within[i], within[j - 1] + 1, {}))
     }
+    if (after >= 0) runs.push(run(doc, after, runEnd(doc, after), {lineBefore: true, keep: true}))
     return false
   })
   if (!runs.length) return null
   // From the end, so that each run is still where it was found; then a position after a run
   // moves as the run did.
-  const moves = runs
-    .sort((a, b) => b.from - a.from)
-    .map((run) => ({at: run.to, by: splitAtBreaks(tr, run.from, run.to, run.linesAfter) - run.to}))
+  const moves = runs.sort((a, b) => b.from - a.from).map((r) => ({at: r.to, by: splitAtRun(tr, r) - r.to}))
   return (pos) => moves.reduce((p, move) => (pos >= move.at ? p + move.by : p), pos)
+}
+
+/**
+ * Where the selection ends, by the lines it is on: one that reaches only the start of a line
+ * (after a line break, or of a textblock) ends at the end of the line before, as in a code
+ * editor.
+ */
+export function selectionEnd(state: EditorState): number {
+  const sel = state.selection
+  const $to = sel.$to
+  if (sel.empty || !(sel instanceof TextSelection)) return sel.to
+  if (isBreak($to.nodeBefore)) return sel.to - 1
+  if ($to.parent.isTextblock && $to.parentOffset === 0) {
+    const before = Selection.findFrom(state.doc.resolve($to.before()), -1, true)
+    if (before && before.head >= sel.from) return before.head
+  }
+  return sel.to
 }
 
 /**
@@ -125,10 +174,21 @@ export function splitAfterLine(tr: Transaction, pos: number): number | null {
     if (at < 0 && child.type === nodes.hard_break && $pos.start() + offset >= pos) at = $pos.start() + offset
   })
   if (at < 0) return null
-  const to = runEnd(tr.doc, at)
-  const linesAfter = to < $pos.end()
-  splitAtBreaks(tr, at, to, linesAfter)
-  return linesAfter ? at + 1 : null
+  const r = run(tr.doc, at, runEnd(tr.doc, at), {lineBefore: true, keep: true})
+  splitAtRun(tr, r)
+  return r.trailing ? null : at + 1
+}
+
+/**
+ * If `pos` is on an empty line of a paragraph with other lines (whose lines may be split), makes
+ * that line an empty paragraph of its own. Returns where that paragraph is, or null.
+ */
+export function splitOffEmptyLine(tr: Transaction, pos: number): number | null {
+  const $pos = tr.doc.resolve(pos)
+  if (!splittable($pos) || !$pos.parent.content.size) return null
+  if (($pos.nodeBefore && !isBreak($pos.nodeBefore)) || ($pos.nodeAfter && !isBreak($pos.nodeAfter))) return null
+  const map = splitLines(tr, pos, pos)
+  return map && tr.doc.resolve(map(pos)).before()
 }
 
 /** Replaces the line breaks in the textblocks touching `from`..`to` with spaces (for blocks of one line). */
@@ -138,6 +198,28 @@ export function flattenBreaks(tr: Transaction, from: number, to: number): void {
     if (node.type === nodes.hard_break) breaks.push(pos)
   })
   for (const pos of breaks.reverse()) tr.replaceWith(pos, pos + 1, schema.text(' '))
+}
+
+/** Whether `node` is an inline atom with markdown of its own (not text, not a line break). */
+export const isMarkdownAtom = (node: Node) => node.isInline && node.isAtom && !node.isText && node.type !== nodes.hard_break
+
+/**
+ * Replaces the inline atoms (links to notes, images, footnote references, inline HTML) of the
+ * textblocks touching `from`..`to` that are about to become code blocks with their markdown,
+ * as text: a code block holds only text, and the atoms would otherwise vanish. Textblocks
+ * that cannot become one (table cells) keep theirs, as setBlockType leaves them be.
+ */
+export function atomsToText(tr: Transaction, from: number, to: number): void {
+  const atoms: {pos: number; node: Node}[] = []
+  tr.doc.nodesBetween(from, to, (node, pos, parent, index) => {
+    if (!node.isTextblock) return true
+    if (!parent || !parent.canReplaceWith(index, index + 1, nodes.code_block)) return false
+    node.forEach((child, offset) => {
+      if (isMarkdownAtom(child)) atoms.push({pos: pos + 1 + offset, node: child})
+    })
+    return false
+  })
+  for (const {pos, node} of atoms.reverse()) tr.replaceWith(pos, pos + node.nodeSize, schema.text(atomMarkdown(node), node.marks))
 }
 
 /** The state `tr` leads to, for working out a next step: without plugins (and their appended transactions). */
@@ -154,9 +236,9 @@ export function append(tr: Transaction, inner: Transaction): Transaction {
 }
 
 /**
- * `cmd`, a block command (a heading, a list, a quote...), on the selected lines: they become
- * paragraphs of their own first, so that the rest of their paragraph is left as it is. A
- * selection that reaches only the start of a line leaves that line out, as in a code editor.
+ * `cmd`, a block command (a heading, a list, a quote...), on the selected lines (selectionEnd):
+ * they become paragraphs of their own first, so that the rest of their paragraph is left as it
+ * is.
  */
 export function onLines(cmd: Command): Command {
   return (state, dispatch) => {
@@ -164,10 +246,10 @@ export function onLines(cmd: Command): Command {
     const text = sel instanceof TextSelection
     // A selected link to a note or picture is on a line as the cursor would be.
     if (!text && !(sel instanceof NodeSelection && sel.node.isInline)) return cmd(state, dispatch)
-    const to = !sel.empty && isBreak(sel.$to.nodeBefore) && splittable(sel.$to) ? sel.to - 1 : sel.to
+    const to = selectionEnd(state)
     const tr = state.tr
-    const map = splitLines(tr, sel.from, to)
-    if (!map) return cmd(state, dispatch)
+    const map = splitLines(tr, sel.from, to) ?? ((pos: number) => pos)
+    if (!tr.docChanged && to === sel.to) return cmd(state, dispatch)
     const mapEnd = (pos: number) => map(pos === sel.to ? to : pos)
     tr.setSelection(
       text ? TextSelection.create(tr.doc, mapEnd(sel.anchor), mapEnd(sel.head)) : NodeSelection.create(tr.doc, map(sel.from)),
@@ -234,12 +316,31 @@ export function textblockHandler(type: NodeType, getAttrs?: (match: RegExpMatchA
     const $start = state.doc.resolve(start)
     if (!$start.node(-1).canReplaceWith($start.index(-1), $start.indexAfter(-1), type)) return null
     const tr = state.tr.delete(start, end)
-    // A heading holds no line break (setBlockType would drop them, joining the lines' words); a
-    // code block turns them into newlines.
-    if (type.whitespace !== 'pre' && !type.contentMatch.matchType(nodes.hard_break)) {
-      flattenBreaks(tr, $start.start(), tr.mapping.map($start.end()))
-    }
+    // What setBlockType would drop: a code block holds only text (its line breaks become
+    // newlines), and a heading no line breaks, which would join the lines' words.
+    const blockEnd = tr.mapping.map($start.end())
+    if (type.whitespace === 'pre') atomsToText(tr, $start.start(), blockEnd)
+    else if (!type.contentMatch.matchType(nodes.hard_break)) flattenBreaks(tr, $start.start(), blockEnd)
     return tr.setBlockType(start, start, type, getAttrs ? getAttrs(match) : null)
+  }
+}
+
+/**
+ * `enter`, the Enter key's commands, with the selection out of the way first: one over blocks
+ * goes, as typing replaces it, and a selected picture or link to a note stays, Enter going in
+ * before it (where the usual Enter splits a paragraph or a list item).
+ */
+export function enterReplacing(enter: Command): Command {
+  return (state, dispatch, view) => {
+    const sel = state.selection
+    let tr: Transaction | null = null
+    if (sel instanceof NodeSelection && sel.node.isInline) tr = state.tr.setSelection(TextSelection.create(state.doc, sel.from))
+    else if (sel instanceof TextSelection && !sel.$from.sameParent(sel.$to)) tr = state.tr.deleteSelection()
+    if (!tr) return enter(state, dispatch, view)
+    let inner: Transaction | null = null
+    if (!enter(stateAfter(state, tr), (t) => (inner = t))) return false
+    if (dispatch && inner) dispatch(append(tr, inner).scrollIntoView())
+    return true
   }
 }
 
@@ -247,29 +348,14 @@ export function textblockHandler(type: NodeType, getAttrs?: (match: RegExpMatchA
  * Enter in a paragraph starts a new line in it (a line break: one newline in the markdown), as
  * in Obsidian. On an empty line it ends the paragraph there (a blank line in the markdown), and
  * an empty last line of a quote leaves the quote. An empty paragraph, or the start of one, is
- * left to the usual Enter: a new paragraph (another blank line). A selection over paragraphs
- * goes, and Enter is pressed where it was; a selected picture or link to a note gets a line
- * break before it, where the usual Enter would split the paragraph.
+ * left to the usual Enter: a new paragraph (another blank line).
  */
 export const enterNewLine: Command = (state, dispatch) => {
   const sel = state.selection
-  if (sel instanceof NodeSelection) {
-    const $from = sel.$from
-    if (!sel.node.isInline || $from.parent.type !== nodes.paragraph || $from.parentOffset === 0) return false
-    if (dispatch) dispatch(state.tr.insert(sel.from, nodes.hard_break.create()).scrollIntoView())
-    return true
-  }
   if (!(sel instanceof TextSelection)) return false
   const {$from, $to} = sel
   const para = $from.parent
-  if (para.type !== nodes.paragraph) return false
-  if (!$from.sameParent($to)) {
-    const tr = state.tr.deleteSelection()
-    let inner: Transaction | null = null
-    if (!enterNewLine(stateAfter(state, tr), (t) => (inner = t))) return false
-    if (dispatch && inner) dispatch(append(tr, inner).scrollIntoView())
-    return true
-  }
+  if (para.type !== nodes.paragraph || !$from.sameParent($to)) return false
   if (para.content.size === 0 || (sel.empty && $from.parentOffset === 0)) return false
   const onEmptyLine = sel.empty && isBreak($from.nodeBefore) && (!$from.nodeAfter || isBreak($from.nodeAfter))
   if (!onEmptyLine || !splittable($from)) {
@@ -277,25 +363,29 @@ export const enterNewLine: Command = (state, dispatch) => {
     return true
   }
   if (dispatch) {
-    // The empty lines around the cursor become a paragraph break and empty paragraphs, as the
-    // markdown reads them (see splitAtBreaks), with one more for this Enter, and the cursor goes
-    // to the line below its own. At the end of the paragraph, the empty lines were not written
-    // to the file: only the cursor's stays, as an empty paragraph.
     const pos = $from.pos
     const from = runStart(state.doc, pos)
     const to = runEnd(state.doc, pos)
-    const leading = from === $from.start() ? 1 : 0
-    const trailing = to === $from.end()
-    // Empty lines in the run, before a line follows it: those above the cursor's, and all.
-    const above = pos - from - 1 + leading
-    const lines = to - from - 1 + leading
     const tr = state.tr
-    breaksToParagraphs(tr, from, to, trailing ? 0 : lines)
-    const cursor = from + 2 + 2 * (trailing ? 0 : above)
+    let cursor: number
+    if (to === $from.end()) {
+      // Empty lines at the end of a paragraph are not written to the file (readRun): only the
+      // cursor's stays, an empty paragraph after it.
+      breaksToParagraphs(tr, from, to, 0)
+      cursor = from + 2
+    } else {
+      // One more empty line, then the run as markdown reads it, the cursor on the line below
+      // its own: a spacer at the top level, else a line break kept after the blank line.
+      tr.insert(pos, nodes.hard_break.create())
+      const r = run(tr.doc, from, to + 1, {keep: true})
+      splitAtRun(tr, r)
+      const above = pos - from - 1 + (r.leading ? 1 : 0)
+      cursor = r.spacers ? from + 2 + 2 * above : r.leading ? pos + 1 : from + 2 + above
+    }
     tr.setSelection(TextSelection.create(tr.doc, cursor))
     // An empty last line in a quote: out of it, as a second Enter does in Obsidian.
     const $in = tr.doc.resolve(cursor)
-    if (trailing && $in.depth > 1 && $in.node(-1).type === nodes.blockquote && $in.after() === $in.end(-1)) {
+    if (to === $from.end() && $in.depth > 1 && $in.node(-1).type === nodes.blockquote && $in.after() === $in.end(-1)) {
       let lifted: Transaction | null = null
       liftEmptyBlock(stateAfter(state, tr), (t) => (lifted = t))
       if (lifted) append(tr, lifted)
@@ -398,9 +488,10 @@ export const ruleOnEnter = (lineStart: number): Command => (state, dispatch) => 
   if (dispatch) {
     const tr = state.tr.delete(lineStart, $cursor.pos)
     // The lines above stay a paragraph of their own.
-    const at = splittable($cursor) && isBreak(tr.doc.nodeAt(lineStart - 1))
-      ? splitAtBreaks(tr, runStart(tr.doc, lineStart - 1), lineStart, true)
-      : lineStart
+    const at =
+      splittable($cursor) && isBreak(tr.doc.nodeAt(lineStart - 1))
+        ? splitAtRun(tr, run(tr.doc, runStart(tr.doc, lineStart - 1), lineStart, {lineAfter: true}))
+        : lineStart
     tr.insert(at - 1, nodes.horizontal_rule.create())
     tr.setSelection(TextSelection.create(tr.doc, at + 1))
     dispatch(tr.scrollIntoView())

@@ -32,6 +32,8 @@ const marks = schema.marks
 
 interface NormContext {
   footnoteLabels: Set<string>
+  /** The labels, as one string: what the normalization of a paragraph depends on besides it. */
+  labels: string
 }
 
 const FOOTNOTE_LABEL = /^[^\s\]]+$/
@@ -43,7 +45,8 @@ export function normalizeDoc(doc: Node): Node {
     if (n.type === nodes.footnote_def) footnoteLabels.add(sanitizeFootnoteLabel(n.attrs.label))
     return !n.isTextblock
   })
-  return normalizeBlock(doc, {footnoteLabels})
+  // Labels hold no whitespace (sanitizeFootnoteLabel), so a space separates them.
+  return normalizeBlock(doc, {footnoteLabels, labels: [...footnoteLabels].sort().join(' ')})
 }
 
 function sanitizeFootnoteLabel(label: string): string {
@@ -84,7 +87,7 @@ function normalizeBlock(node: Node, ctx: NormContext): Node {
   // make the whole list loose.
   const lines = t !== nodes.list_item
   node.forEach((child) => {
-    if (lines && child.type === nodes.paragraph) children.push(...paragraphsOfLines(child, ctx))
+    if (lines && child.type === nodes.paragraph) children.push(...paragraphsOfLines(child, ctx, t === nodes.doc))
     else children.push(normalizeBlock(child, ctx))
   })
   let attrs = node.attrs
@@ -118,21 +121,53 @@ function normalizeBlock(node: Node, ctx: NormContext): Node {
   return fresh.eq(node) ? node : fresh
 }
 
+/** How markdown reads a run of line breaks in a paragraph (see readRun). */
+export interface RunReading {
+  /** Whether the paragraph ends there: a blank line in the file. */
+  split: boolean
+  /** How many of the breaks, from the run's start, go; the rest stay, `\` lines at the start of the lines after. */
+  cut: number
+  /** Empty paragraphs (spacers) after the paragraph break. */
+  empty: number
+}
+
 /**
- * A paragraph whose empty lines are written as what they are in markdown, blank lines: the
- * lines either side of an empty line are paragraphs of their own, each further empty line
- * between them is an empty paragraph (a spacer), and so is each one the paragraph starts with.
- * Empty lines at its end are not written (that is where the cursor is about to type), as
- * normalizeInline drops their line breaks. The editor splits lines the same way (lines.ts).
+ * How markdown reads a run of `k` line breaks in a paragraph (k - 1 empty lines between lines):
+ * an empty line is a blank line, which ends the paragraph. Between top-level blocks (`spacers`),
+ * each further empty line is a spacer, and so is each one a paragraph starts with (`leading`).
+ * Inside a quote or a footnote markdown holds no extra blank lines, so those stay line breaks
+ * (`\` lines). Empty lines at a paragraph's end (`trailing`) are not written: that is where the
+ * cursor is about to type. The editor splits lines by the same reading (lines.ts).
  */
-function paragraphsOfLines(para: Node, ctx: NormContext): Node[] {
+export function readRun(k: number, leading: boolean, trailing: boolean, spacers: boolean): RunReading {
+  if (trailing) return {split: false, cut: k, empty: 0}
+  if (leading) return spacers ? {split: true, cut: k, empty: k - 1} : {split: false, cut: 0, empty: 0}
+  if (k === 1) return {split: false, cut: 0, empty: 0}
+  return spacers ? {split: true, cut: k, empty: k - 2} : {split: true, cut: 2, empty: 0}
+}
+
+/** Split paragraphs from paragraphsOfLines, kept so that their renderings are cached across saves. */
+const linesCache = new WeakMap<Node, {key: string; out: Node[]}>()
+
+/**
+ * A paragraph whose empty lines are written as what they are in markdown (readRun): blank lines
+ * that end it, spacers between top-level blocks (`spacers`), and `\` lines where markdown can
+ * hold no more. normalizeInline has dropped the line breaks at its end.
+ */
+function paragraphsOfLines(para: Node, ctx: NormContext, spacers: boolean): Node[] {
   const content = normalizeInline(para, ctx)
   const isBreak = (n: Node) => n.type === nodes.hard_break
   if (!content.some((n, i) => isBreak(n) && (i === 0 || isBreak(content[i - 1])))) {
     const fresh = nodes.paragraph.create(para.attrs, content)
     return [fresh.eq(para) ? para : fresh]
   }
+  const key = `${spacers} ${ctx.labels}`
+  const cached = linesCache.get(para)
+  if (cached?.key === key) return cached.out
   const out: Node[] = []
+  // Normalized again: a line that now starts a paragraph is checked as one (demoteLineStartHtml).
+  const close = (line: Node[]) =>
+    out.push(nodes.paragraph.create(para.attrs, normalizeInline(nodes.paragraph.create(para.attrs, line), ctx)))
   let line: Node[] = []
   let run: Node[] = []
   for (const n of content) {
@@ -140,21 +175,24 @@ function paragraphsOfLines(para: Node, ctx: NormContext): Node[] {
       run.push(n)
       continue
     }
-    if (!line.length) {
-      for (let i = 0; i < run.length; i++) out.push(nodes.paragraph.create())
-    } else if (run.length === 1) {
-      line.push(run[0])
-    } else if (run.length > 1) {
-      // Normalized again: a mark that went on over the blank line now ends at the line's end.
-      out.push(nodes.paragraph.create(para.attrs, normalizeInline(nodes.paragraph.create(para.attrs, line), ctx)))
-      for (let i = 2; i < run.length; i++) out.push(nodes.paragraph.create())
-      line = []
+    if (run.length) {
+      const reading = readRun(run.length, !line.length, false, spacers)
+      if (!reading.split) {
+        line.push(...run)
+      } else {
+        if (line.length) close(line)
+        else out.push(nodes.paragraph.create())
+        for (let i = 0; i < reading.empty; i++) out.push(nodes.paragraph.create())
+        line = run.slice(reading.cut)
+      }
+      run = []
     }
-    run = []
     line.push(n)
   }
-  out.push(nodes.paragraph.create(para.attrs, normalizeInline(nodes.paragraph.create(para.attrs, line), ctx)))
-  return out
+  close(line)
+  const result = out.length === 1 && out[0].eq(para) ? [para] : out
+  linesCache.set(para, {key, out: result})
+  return result
 }
 
 /** First row is the header, every row is as wide as the widest, alignment is per column. */

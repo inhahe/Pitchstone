@@ -1,14 +1,14 @@
 import {describe, expect, it} from 'vitest'
 import type {Node} from 'prosemirror-model'
 import {type Command, EditorState, NodeSelection, TextSelection} from 'prosemirror-state'
-import {headingCommand, horizontalRuleCommand, listCommand} from '../src/editor/commands'
-import {enterNewLine} from '../src/editor/lines'
+import {enterCommand, headingCommand, horizontalRuleCommand, listCommand} from '../src/editor/commands'
+import {enterNewLine, textblockHandler} from '../src/editor/lines'
 import {enterShortcut} from '../src/editor/rules'
 import {parseMarkdown} from '../src/markdown/parse'
 import {serializeMarkdown} from '../src/markdown/serialize'
 import {schema} from '../src/schema'
 
-const {doc: docType, paragraph, hard_break, wikilink} = schema.nodes
+const {doc: docType, paragraph, hard_break, wikilink, blockquote} = schema.nodes
 const bullet = listCommand(schema.nodes.bullet_list)
 
 /** A position in `doc` right after (or before) the first `text`. */
@@ -66,11 +66,55 @@ describe('lines split off as the file reads them', () => {
     expect(s.doc.child(0).childCount).toBe(1)
   })
 
+  it('a selection that reaches only the start of the next paragraph leaves it out', () => {
+    const doc = docType.create(null, [p(text('one')), p(text('two'), br(), text('three'))])
+    const sel = () => state(doc, at(doc, 'one', 'before'), at(doc, 'two', 'before'))
+    expect(markdown(run(headingCommand(1), sel()))).toBe('# one\n\ntwo\nthree\n')
+    expect(markdown(run(horizontalRuleCommand, sel()))).toBe('one\n\n---\n\ntwo\nthree\n')
+  })
+
+  it("a selection over a paragraph's empty last line leaves no empty item", () => {
+    const doc = docType.create(null, [p(text('one'), br()), p(text('two'))])
+    expect(markdown(run(bullet, state(doc, at(doc, 'one', 'before'), at(doc, 'two'))))).toBe('- one\n- two\n')
+  })
+
   it('a divider goes after the line the selection ends on, past an empty line', () => {
     const doc = parseMarkdown('one\ntwo\nthree\n')
     expect(markdown(run(horizontalRuleCommand, state(doc, at(doc, 'on'), at(doc, 'thr'))))).toBe('one\ntwo\nthree\n\n---\n')
     const gap = parseMarkdown('two\n\\\nthree\n')
     expect(markdown(run(horizontalRuleCommand, state(gap, at(gap, 'tw'))))).toBe('two\n\n---\n\nthree\n')
+  })
+
+  it('a divider on an empty line takes its place', () => {
+    const doc = docType.create(null, [p(text('a'), br(), br(), br(), text('b'))])
+    let s = run(horizontalRuleCommand, state(doc, at(doc, 'a') + 2))
+    expect(markdown(s)).toBe('a\n\n---\n\nb\n')
+    const last = docType.create(null, [p(text('a'), br())])
+    s = run(horizontalRuleCommand, state(last, at(last, 'a') + 1))
+    expect(markdown(s)).toBe('a\n\n---\n')
+    expect(s.doc.child(0).childCount).toBe(1)
+  })
+
+  it('a divider after a selected last block has a paragraph after it for the cursor', () => {
+    const doc = docType.create(null, [p(text('one')), schema.nodes.horizontal_rule.create()])
+    const s = run(horizontalRuleCommand, EditorState.create({doc, selection: NodeSelection.create(doc, doc.content.size - 1)}))
+    expect(s.doc.lastChild?.type).toBe(paragraph)
+    expect(s.selection).toBeInstanceOf(TextSelection)
+  })
+
+  it('in a quote, extra empty lines stay as line breaks after the blank line', () => {
+    const doc = docType.create(null, [blockquote.create(null, [p(text('x'), br(), br(), br(), text('b'))])])
+    expect(markdown(state(doc, 0))).toBe('> x\n>\n> \\\n> b\n')
+    expect(markdown(run(headingCommand(2), state(doc, at(doc, 'x'))))).toBe('> ## x\n>\n> \\\n> b\n')
+  })
+
+  it('the code block shortcut keeps links to notes, as text', () => {
+    const doc = docType.create(null, [p(text('```js'), wikilink.create({target: 'Note'}), text(' is'))])
+    // The rule's match, its last character (the space) still being typed.
+    const match = '```js '.match(/```(js) $/)!
+    const tr = textblockHandler(schema.nodes.code_block, (m) => ({language: m[1]}))(state(doc, 6), match, 1, 6)!
+    expect(tr.doc.child(0).type).toBe(schema.nodes.code_block)
+    expect(tr.doc.child(0).textContent).toBe('[[Note]] is')
   })
 })
 
@@ -91,16 +135,34 @@ describe('Enter', () => {
     expect(s.selection.$from.parent.content.size).toBe(0)
   })
 
-  it('with a link to a note selected, breaks the line before it', () => {
+  it('with a link to a note selected, breaks the line before it, and keeps it', () => {
     const doc = docType.create(null, [p(text('one'), wikilink.create({target: 'Note'}), text(' two'))])
-    const s = run(enterNewLine, EditorState.create({doc, selection: NodeSelection.create(doc, at(doc, 'one'))}))
+    const s = run(enterCommand, EditorState.create({doc, selection: NodeSelection.create(doc, at(doc, 'one'))}))
     expect(markdown(s)).toBe('one\n[[Note]] two\n')
-    expect((s.selection as NodeSelection).node?.type).toBe(wikilink)
+    expect(s.selection.$from.nodeAfter?.type).toBe(wikilink)
+    // In a list, the next item starts with it.
+    const item = parseMarkdown('- see[[Note]]\n')
+    const inItem = run(enterCommand, EditorState.create({doc: item, selection: NodeSelection.create(item, at(item, 'see'))}))
+    expect(markdown(inItem)).toBe('- see\n- [[Note]]\n')
   })
 
   it('over paragraphs replaces the selection with one newline', () => {
     const doc = parseMarkdown('onetwo\n\nthreefour\n')
-    expect(markdown(run(enterNewLine, state(doc, at(doc, 'one'), at(doc, 'three'))))).toBe('one\nfour\n')
+    expect(markdown(run(enterCommand, state(doc, at(doc, 'one'), at(doc, 'three'))))).toBe('one\nfour\n')
+  })
+
+  it('over list items starts a new item, as in a list', () => {
+    const doc = parseMarkdown('- milk\n- eggs\n')
+    expect(markdown(run(enterCommand, state(doc, at(doc, 'mi'), at(doc, 'eg'))))).toBe('- mi\n- gs\n')
+  })
+
+  it('on an empty line in a quote keeps the new line, as a line break after the blank line', () => {
+    const doc = docType.create(null, [blockquote.create(null, [p(text('a'), br(), br(), text('b'))])])
+    expect(markdown(state(doc, 0))).toBe('> a\n>\n> b\n')
+    const s = run(enterCommand, state(doc, at(doc, 'a') + 1))
+    expect(markdown(s)).toBe('> a\n>\n> \\\n> b\n')
+    expect(s.selection.$from.parentOffset).toBe(0)
+    expect(s.selection.$from.nodeAfter?.type).toBe(hard_break)
   })
 
   it('after --- with lines below puts the cursor on a new line above them', () => {
