@@ -194,6 +194,13 @@ links. Notes you only open are never rewritten. See `known-issues.md` for the de
 
 ## Installing on your phone
 
+The simplest way: on the phone, open [Releases](https://github.com/inhahe/Pitchstone/releases),
+download the latest `Pitchstone-<version>.apk`, and open it (allow your browser or file
+manager to install apps when asked). A newer release installs over an older one, keeping your
+notes.
+
+To build it yourself and install it over USB:
+
 1. On the phone: Settings → About phone → tap **Build number** seven times; then Settings →
    System → Developer options → turn on **USB debugging**.
 2. Connect the phone to the PC with USB, unlock it, and accept **Allow USB debugging?**
@@ -233,5 +240,10 @@ storePassword=…
 keyAlias=pitchstone
 keyPassword=…
 ```
+
+To publish a release on GitHub, raise the version (`versionName` and `versionCode` in
+`app/build.gradle.kts`), commit and push, then run `release.bat` (it needs the GitHub CLI,
+`gh`, logged in). It builds the signed APK and publishes it as `v<versionName>`, unless that
+version is already released; `release.bat --dry-run` shows what it would publish.
 
 How the app is built is described in `design.md`.
