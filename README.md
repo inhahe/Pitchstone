@@ -241,9 +241,9 @@ keyAlias=pitchstone
 keyPassword=…
 ```
 
-To publish a release on GitHub, raise the version (`versionName` and `versionCode` in
-`app/build.gradle.kts`), commit and push, then run `release.bat` (it needs the GitHub CLI,
-`gh`, logged in). It builds the signed APK and publishes it as `v<versionName>`, unless that
-version is already released; `release.bat --dry-run` shows what it would publish.
+To publish a release on GitHub, raise the version (`appVersion` in `gradle.properties`),
+commit and push to main, then run `release.bat` (it needs the GitHub CLI, `gh`, logged in).
+It runs the tests, builds the signed APK and publishes it as `v<appVersion>`, unless that
+version is already released; `release.bat --dry-run` does all but publish.
 
 How the app is built is described in `design.md`.

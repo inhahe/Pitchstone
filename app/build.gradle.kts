@@ -70,6 +70,16 @@ val buildEditor = tasks.register<BuildEditorTask>("buildEditor") {
 // outside version control) names it; see README.md. Without it, release builds are unsigned.
 val keystoreProperties = rootProject.file("keystore.properties")
 
+// The version: appVersion in gradle.properties, major.minor.patch. versionCode, which Android
+// requires to rise for an update to install, is derived from it: minor and patch stay below 100.
+val appVersion = providers.gradleProperty("appVersion").get()
+val appVersionCode = appVersion.split('.').map { it.toIntOrNull() }.let { parts ->
+    val (major, minor, patch) = parts.filterNotNull().takeIf { it.size == 3 && parts.size == 3 }
+        ?: error("appVersion '$appVersion' in gradle.properties must be major.minor.patch")
+    require(minor < 100 && patch < 100) { "appVersion '$appVersion': minor and patch must stay below 100" }
+    major * 10000 + minor * 100 + patch
+}
+
 android {
     namespace = "app.pitchstone"
     compileSdk = 37
@@ -78,8 +88,8 @@ android {
         applicationId = "app.pitchstone"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

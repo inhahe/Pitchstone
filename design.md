@@ -39,6 +39,17 @@ variant API; the bundle is never committed. It runs `npm ci` first when `node_mo
 missing or older than `package-lock.json` (npm's `node_modules/.package-lock.json` records the
 install).
 
+**Version and releases.** The version is `appVersion` in `gradle.properties` (major.minor.patch,
+raised as `CLAUDE.md` says); `app/build.gradle.kts` makes it `versionName` and derives
+`versionCode` = major×10000 + minor×100 + patch, so an update always installs over the version
+before. `build-release.bat` builds the signed release APK (signing: `keystore.properties`,
+outside git) for `install-on-phone.bat` (adb, over USB) and `release.bat`, which publishes a
+GitHub release `v<appVersion>`: it refuses a version already released or not above the last,
+a tag without a release, a branch other than main, and anything uncommitted, untracked among
+the build inputs, or unpushed; then runs the editor's tests (unit and e2e) and the app's
+(`testDebugUnitTest`), builds, and attaches the APK and R8's mapping file, with notes listing
+the commits since the previous release tag.
+
 ## The markdown contract
 
 Notes are stored as markdown, in this dialect (`editor/src/markdown/md.ts`): CommonMark, GFM

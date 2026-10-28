@@ -1,26 +1,30 @@
 @echo off
 rem Publishes a release of Pitchstone on GitHub (github.com/inhahe/Pitchstone/releases): the
 rem signed release APK, and R8's mapping file for reading that build's crash traces, tagged
-rem v<versionName> (app\build.gradle.kts). Publishes nothing if that version is already
-rem released: bump the version first (CLAUDE.md).
+rem v<appVersion> (gradle.properties), once the tests pass. Publishes nothing if that version is
+rem already released or not above the last release: raise it first (CLAUDE.md).
 rem
-rem   release.bat            build and publish
-rem   release.bat --dry-run  build and write the release notes, but publish nothing
+rem   release.bat            test, build and publish
+rem   release.bat --dry-run  test, build and show the release notes; publish nothing
 setlocal EnableExtensions
 
 set "REPO=inhahe/Pitchstone"
 set "DRY="
-if /i "%~1"=="--dry-run" set "DRY=1"
-if not defined JAVA_HOME set "JAVA_HOME=%USERPROFILE%\.jdks\jdk-21.0.12.1+1"
+if /i "%~1"=="--dry-run" (
+    set "DRY=1"
+) else if not "%~1"=="" (
+    goto :usage
+)
+if not "%~2"=="" goto :usage
 
 cd /d "%~dp0"
 
-rem The version: the text between the quotes on the versionName line.
 set "VERSION="
-for /f tokens^=2^ delims^=^" %%v in ('findstr /r /c:"^ *versionName *=" app\build.gradle.kts') do set "VERSION=%%v"
-echo %VERSION%| findstr /r /x "[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*" >nul
+for /f "tokens=1,* delims==" %%a in (gradle.properties) do if "%%a"=="appVersion" set "VERSION=%%b"
+call :number "%VERSION%" CODE
 if errorlevel 1 (
-    echo Could not read versionName from app\build.gradle.kts ^(found "%VERSION%"^).
+    echo appVersion in gradle.properties is "%VERSION%": it must be major.minor.patch, minor and
+    echo patch below 100, without leading zeros.
     exit /b 1
 )
 set "TAG=v%VERSION%"
@@ -30,23 +34,28 @@ if errorlevel 1 (
     echo The GitHub CLI ^(gh^) is needed: https://cli.github.com
     exit /b 1
 )
-gh auth status >nul 2>&1
+gh auth status --hostname github.com >nul 2>&1
 if errorlevel 1 (
-    echo gh is not logged in to GitHub: run  gh auth login
+    echo gh is not logged in to github.com: run  gh auth login
     exit /b 1
 )
 
-gh release view "%TAG%" --repo %REPO% >nul 2>&1
-if not errorlevel 1 (
-    echo Version %VERSION% is already released: https://github.com/%REPO%/releases/tag/%TAG%
-    echo Nothing was published. Bump versionName and versionCode in app\build.gradle.kts first ^(see CLAUDE.md^).
+rem What is released is main as GitHub has it: nothing uncommitted, nothing left out, nothing unpushed.
+set "BRANCH="
+for /f %%b in ('git symbolic-ref --short HEAD 2^>nul') do set "BRANCH=%%b"
+if not "%BRANCH%"=="main" (
+    echo Releases are made from main, and this is "%BRANCH%". Nothing was published.
     exit /b 1
 )
-
-rem What is released is the code on GitHub: everything committed, and pushed.
 git diff --quiet HEAD --
 if errorlevel 1 (
     echo There are uncommitted changes: commit and push them first. Nothing was published.
+    exit /b 1
+)
+set "LEFT_OUT="
+for /f "delims=" %%f in ('git ls-files --others --exclude-standard -- app editor gradle build.gradle.kts settings.gradle.kts gradle.properties') do set "LEFT_OUT=%%f"
+if defined LEFT_OUT (
+    echo %LEFT_OUT% is not in git, but the build may use it: add it, or ignore it. Nothing was published.
     exit /b 1
 )
 git fetch --quiet --tags origin
@@ -55,54 +64,75 @@ if errorlevel 1 (
     exit /b 1
 )
 for /f %%h in ('git rev-parse HEAD') do set "HEAD=%%h"
-set "UPSTREAM="
-for /f %%h in ('git rev-parse @{u} 2^>nul') do set "UPSTREAM=%%h"
-if not "%HEAD%"=="%UPSTREAM%" (
-    echo This commit is not the one GitHub has: push ^(or pull^) first. Nothing was published.
+set "MAIN="
+for /f %%h in ('git rev-parse origin/main 2^>nul') do set "MAIN=%%h"
+if not "%HEAD%"=="%MAIN%" (
+    echo This commit is not the main GitHub has: push ^(or pull^) first. Nothing was published.
     exit /b 1
 )
 
-if not exist keystore.properties (
-    echo keystore.properties is missing, so the APK would be unsigned ^(see README.md, Building^).
+rem Once per version, and each above the one before.
+gh release view "%TAG%" --repo %REPO% >nul 2>&1
+if not errorlevel 1 (
+    echo Version %VERSION% is already released: https://github.com/%REPO%/releases/tag/%TAG%
+    echo Nothing was published. Raise appVersion in gradle.properties first ^(see CLAUDE.md^).
     exit /b 1
 )
+git rev-parse -q --verify "refs/tags/%TAG%" >nul
+if not errorlevel 1 (
+    echo The tag %TAG% exists without a release ^(left by a deleted one?^): raise appVersion, or
+    echo delete the tag on GitHub and here. Nothing was published.
+    exit /b 1
+)
+set "PREVIOUS="
+for /f %%t in ('git describe --tags --abbrev^=0 --match "v[0-9]*" HEAD 2^>nul') do set "PREVIOUS=%%t"
+if not defined PREVIOUS goto :new_version
+call :number "%PREVIOUS:~1%" PREVIOUS_CODE
+if errorlevel 1 goto :new_version
+if %CODE% GTR %PREVIOUS_CODE% goto :new_version
+echo Version %VERSION% is not above the last release, %PREVIOUS%: raise appVersion in gradle.properties.
+echo Nothing was published.
+exit /b 1
+:new_version
 
-echo Building Pitchstone %VERSION%...
-rem By its full path: cmd may be set not to look in the current folder.
-call "%~dp0gradlew.bat" assembleRelease
+echo Testing Pitchstone %VERSION%...
+pushd editor
+call npm test
+if errorlevel 1 goto :tests_failed
+call npm run test:e2e
+if errorlevel 1 goto :tests_failed
+popd
+
+echo Building Pitchstone %VERSION%, after the app's tests...
+call "%~dp0build-release.bat" testDebugUnitTest
 if errorlevel 1 (
-    echo The build failed. Nothing was published.
-    exit /b 1
-)
-set "APK=app\build\outputs\apk\release\app-release.apk"
-set "MAPPING=app\build\outputs\mapping\release\mapping.txt"
-if not exist "%APK%" (
-    echo No signed APK at %APK%. Nothing was published.
+    echo Nothing was published.
     exit /b 1
 )
 
+set "MINSDK="
+for /f "tokens=2 delims== " %%m in ('findstr /r /c:"^ *minSdk *=" app\build.gradle.kts') do set "MINSDK=%%m"
+set "ANDROID=Android API level %MINSDK%"
+for %%p in (26:8.0 27:8.1 28:9 29:10 30:11 31:12 32:12L 33:13 34:14 35:15 36:16) do (
+    for /f "tokens=1,2 delims=:" %%a in ("%%p") do if "%%a"=="%MINSDK%" set "ANDROID=Android %%b"
+)
+
+rem From here on, every way out goes through :finish, which removes OUT.
+set "RESULT=1"
 set "OUT=%TEMP%\pitchstone-release-%VERSION%"
 if exist "%OUT%" rd /s /q "%OUT%"
-mkdir "%OUT%"
-copy /y "%APK%" "%OUT%\Pitchstone-%VERSION%.apk" >nul
-set "ASSETS="%OUT%\Pitchstone-%VERSION%.apk""
-if exist "%MAPPING%" (
-    copy /y "%MAPPING%" "%OUT%\Pitchstone-%VERSION%-mapping.txt" >nul
-    set ASSETS=%ASSETS% "%OUT%\Pitchstone-%VERSION%-mapping.txt"
-)
+mkdir "%OUT%" || goto :finish
+copy /y "app\build\outputs\apk\release\app-release.apk" "%OUT%\Pitchstone-%VERSION%.apk" >nul || goto :finish
+set ASSETS="%OUT%\Pitchstone-%VERSION%.apk"
+set "MAPPING=app\build\outputs\mapping\release\mapping.txt"
+if exist "%MAPPING%" copy /y "%MAPPING%" "%OUT%\Pitchstone-%VERSION%-mapping.txt" >nul || goto :finish
+if exist "%MAPPING%" set ASSETS=%ASSETS% "%OUT%\Pitchstone-%VERSION%-mapping.txt"
 
-set "HASH="
-for /f "delims=" %%h in ('certutil -hashfile "%OUT%\Pitchstone-%VERSION%.apk" SHA256 ^| findstr /v ":"') do set "HASH=%%h"
-
-rem The release notes: how to install, the checksum, and what changed since the last release.
-set "PREVIOUS="
-for /f %%t in ('git describe --tags --abbrev^=0 --match "v*" HEAD 2^>nul') do set "PREVIOUS=%%t"
+rem The release notes: how to install, and what changed since the last release.
 set "NOTES=%OUT%\notes.md"
-> "%NOTES%" echo Pitchstone %VERSION%, markdown notes for Android ^(8.0 and later^).
+> "%NOTES%" echo Pitchstone %VERSION%, markdown notes for %ANDROID% and later.
 >> "%NOTES%" echo.
 >> "%NOTES%" echo **Install:** on the phone, download `Pitchstone-%VERSION%.apk` and open it; allow your browser or file manager to install apps when asked. A newer version installs over an older one, keeping your notes.
->> "%NOTES%" echo.
->> "%NOTES%" echo SHA-256 of the APK: `%HASH%`
 >> "%NOTES%" echo.
 if defined PREVIOUS (
     >> "%NOTES%" echo **Changes since %PREVIOUS%:**
@@ -119,17 +149,45 @@ if defined DRY (
     echo.
     type "%NOTES%"
     echo.
-    rd /s /q "%OUT%"
-    exit /b 0
+    set "RESULT=0"
+    goto :finish
 )
 
 gh release create "%TAG%" %ASSETS% --repo %REPO% --target %HEAD% --title "Pitchstone %VERSION%" --notes-file "%NOTES%"
 if errorlevel 1 (
     echo Publishing failed.
-    rd /s /q "%OUT%"
-    exit /b 1
+    goto :finish
 )
-rd /s /q "%OUT%"
+set "RESULT=0"
 git fetch --quiet --tags origin
 echo.
 echo Released: https://github.com/%REPO%/releases/tag/%TAG%
+
+:finish
+if exist "%OUT%" rd /s /q "%OUT%"
+if not "%RESULT%"=="0" echo Nothing was published.
+exit /b %RESULT%
+
+:tests_failed
+popd
+echo The tests failed. Nothing was published.
+exit /b 1
+
+:usage
+echo Usage: release.bat [--dry-run]
+echo Tests, builds and publishes the version in gradle.properties as a GitHub release; with
+echo --dry-run, it publishes nothing.
+exit /b 1
+
+rem :number "<major.minor.patch>" <variable> sets the variable to the version's number,
+rem major*10000 + minor*100 + patch, as versionCode in app\build.gradle.kts; fails for text that
+rem is not such a version (minor or patch from 100, or a leading zero, which set /a reads as octal).
+:number
+echo %~1| findstr /r /x "[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*" >nul || exit /b 1
+echo .%~1| findstr /r "\.0[0-9]" >nul && exit /b 1
+for /f "tokens=1-3 delims=." %%a in ("%~1") do (
+    if %%b GEQ 100 exit /b 1
+    if %%c GEQ 100 exit /b 1
+    set /a "%~2=%%a*10000+%%b*100+%%c"
+)
+exit /b 0
