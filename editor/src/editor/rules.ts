@@ -7,12 +7,12 @@
 // for text still being typed: when a key is pressed, the last character of the match is not in
 // the document yet (it is `pending`); when an IME composition ends, the whole match is.
 
-import {InputRule, inputRules, textblockTypeInputRule, wrappingInputRule} from 'prosemirror-inputrules'
+import {InputRule, inputRules} from 'prosemirror-inputrules'
 import type {MarkType, Node} from 'prosemirror-model'
 import {type EditorState, type Plugin, TextSelection, type Transaction} from 'prosemirror-state'
 import {findWrapping} from 'prosemirror-transform'
 import {schema} from '../schema'
-import {atLineStarts} from './lines'
+import {blockRule, lineBeforeCursor, onLines, textblockHandler, wrapHandler} from './lines'
 import {settings} from './settings'
 
 const {nodes, marks} = schema
@@ -66,9 +66,9 @@ function nodeRule(regexp: RegExp, build: (m: RegExpMatchArray) => Node | null, p
   )
 }
 
-/** `[ ] ` or `[x] ` at the start of a paragraph: a task item. */
+/** `[ ] ` or `[x] ` at the start of a line: a task item. */
 function taskRule(): InputRule {
-  return new InputRule(/^\[([ xX]?)\][ \u00a0]$/, (state, match, start, end) => {
+  return blockRule(/\[([ xX]?)\][ \u00a0]$/, (state, match, start, end) => {
     const checked = match[1] === 'x' || match[1] === 'X'
     const $start = state.doc.resolve(start)
     const para = $start.parent
@@ -98,13 +98,13 @@ function taskRule(): InputRule {
   })
 }
 
-/** "```lang " at the start of a paragraph: a code block. */
+/** "```lang " at the start of a line: a code block. */
 function codeBlockRule(): InputRule {
-  return textblockTypeInputRule(/^```([^`\s]*)[ \u00a0]$/, nodes.code_block, (m) => ({language: m[1] || ''}))
+  return blockRule(/```([^`\s]*)[ \u00a0]$/, textblockHandler(nodes.code_block, (m) => ({language: m[1] || ''})))
 }
 
 function headingRule(): InputRule {
-  return textblockTypeInputRule(/^(#{1,6})[ \u00a0]$/, nodes.heading, (m) => ({level: m[1].length}))
+  return blockRule(/(#{1,6})[ \u00a0]$/, textblockHandler(nodes.heading, (m) => ({level: m[1].length})))
 }
 
 /** Groups: (1) prefix, (2) the whole link, (3) `!` for an embed, (4) target, (5) alias. */
@@ -116,20 +116,22 @@ const wikilink = (m: RegExpMatchArray) => {
 
 export function markdownRules(): InputRule[] {
   const rules = [
-    // Block structure, at the start of a textblock, or of a line in a paragraph.
-    ...[
-      headingRule(),
-      wrappingInputRule(/^\s*>[ \u00a0]$/, nodes.blockquote),
-      wrappingInputRule(/^\s*([-+*])[ \u00a0]$/, nodes.bullet_list),
-      wrappingInputRule(
-        /^(\d{1,9})[.)][ \u00a0]$/,
+    // Block structure, at the start of a textblock, or of a line in a paragraph (lines.ts).
+    headingRule(),
+    blockRule(/\s*>[ \u00a0]$/, wrapHandler(nodes.blockquote)),
+    blockRule(/\s*([-+*])[ \u00a0]$/, wrapHandler(nodes.bullet_list)),
+    blockRule(
+      /(\d{1,9})[.)][ \u00a0]$/,
+      wrapHandler(
         nodes.ordered_list,
         (m) => ({order: Number(m[1])}),
         (m, node) => node.childCount + node.attrs.order === Number(m[1]),
       ),
-      taskRule(),
-      codeBlockRule(),
-    ].flatMap(atLineStarts),
+      // After a line break, only from 1: in CommonMark only that interrupts a paragraph.
+      (m) => Number(m[1]) === 1,
+    ),
+    taskRule(),
+    codeBlockRule(),
 
     // Inline atoms.
     nodeRule(/(^|[^\\])((!?)\[\[([^[\]\n|]+)(?:\|([^[\]\n]*))?\]\])$/, wikilink),
@@ -177,13 +179,24 @@ export function markdownInputRules(): Plugin {
   return plugin
 }
 
+const RULE_LINE = /^(?:---|\*\*\*|___)$/
+const FENCE_LINE = /^```([^`\s]*)$/
+
 /**
- * Enter on a paragraph that holds only `---` (or `***`, `___`) makes a horizontal rule, and on
- * "```lang" a code block. Returns false when it does not apply. (For a line of a paragraph,
- * with [onLines].)
+ * Enter at the end of a line that holds only `---` (or `***`, `___`) makes a horizontal rule,
+ * and on "```lang" a code block; the line becomes a paragraph of its own first. Returns false
+ * when it does not apply.
  */
 export function enterShortcut(state: EditorState, dispatch?: (tr: Transaction) => void): boolean {
   if (!settings.markdownShortcuts) return false
+  // Looked at before anything is split: most Enters are not these.
+  const line = lineBeforeCursor(state)
+  if (line === null || !(RULE_LINE.test(line) || FENCE_LINE.test(line))) return false
+  return onLines(paragraphShortcut)(state, dispatch)
+}
+
+/** [enterShortcut] on a paragraph that holds only the line. */
+function paragraphShortcut(state: EditorState, dispatch?: (tr: Transaction) => void): boolean {
   const {$cursor} = state.selection as TextSelection
   if (!$cursor) return false
   const para = $cursor.parent
@@ -198,7 +211,7 @@ export function enterShortcut(state: EditorState, dispatch?: (tr: Transaction) =
   const text = para.textContent
   const start = $cursor.before()
   const end = $cursor.after()
-  if (/^(?:---|\*\*\*|___)$/.test(text)) {
+  if (RULE_LINE.test(text)) {
     if (dispatch) {
       const tr = state.tr.replaceWith(start, end, [nodes.horizontal_rule.create(), nodes.paragraph.create()])
       tr.setSelection(TextSelection.create(tr.doc, start + 2))
@@ -206,7 +219,7 @@ export function enterShortcut(state: EditorState, dispatch?: (tr: Transaction) =
     }
     return true
   }
-  const fence = /^```([^`\s]*)$/.exec(text)
+  const fence = FENCE_LINE.exec(text)
   if (fence) {
     if (dispatch) {
       const tr = state.tr.replaceWith(start, end, nodes.code_block.create({language: fence[1]}))

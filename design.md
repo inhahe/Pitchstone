@@ -95,10 +95,14 @@ documents pass.
   quote an empty last line leaves it. Backspace at the start of a paragraph after another, and
   Delete at the end of one, turn the blank line between back into a line break. What acts a line
   at a time first makes the selected lines paragraphs of their own (`onLines`, `splitLines`):
-  the toolbar's heading, list, quote, code block and divider, and Enter's `---`/fence
-  shortcuts. Each block input rule has a twin (`atLineStarts`) matching after a line break
-  (U+FFFC in the text rules see), which splits the line off before the rule applies. Paragraphs
-  in list items keep Enter as a new item, and are not split.
+  the toolbar's heading, list, quote and code block, and Enter's `---`/fence shortcuts; the
+  divider goes after the cursor line, splitting off only what follows it. Each block input rule
+  is a `blockRule`, matching at the start of a textblock or after a line break (U+FFFC in the
+  text rules see); after a break it splits the line off on both sides before applying, and a
+  numbered list starts there only from 1, since in CommonMark only that interrupts a paragraph.
+  The command runs on an intermediate state built without plugins, so no
+  `appendTransaction` sees the half-done split. Paragraphs in list items keep Enter as a new
+  item, and are not split.
 - **Clipboard**: copy gives markdown (shortcuts on) or plain text; pasted plain text is parsed
   as markdown only with shortcuts on.
 - **Plugins**: decorations (tags, bare URLs, missing-note links, find matches, placeholder;

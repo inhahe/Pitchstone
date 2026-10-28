@@ -17,7 +17,7 @@ import {
   TableMap,
 } from 'prosemirror-tables'
 import {atomMarkdown} from '../markdown/serialize'
-import {onLines} from './lines'
+import {append, onLines} from './lines'
 import {schema} from '../schema'
 
 const {nodes, marks} = schema
@@ -58,7 +58,8 @@ export function headingCommand(level: number): Command {
     if (!setBlockType(nodes.heading, {level})(state)) return false
     if (dispatch) {
       const tr = state.tr
-      flattenBreaks(tr, state.selection.from, state.selection.to)
+      // The whole textblocks: a heading holds no line break (setBlockType would drop them).
+      flattenBreaks(tr, state.selection.$from.start(), state.selection.$to.end())
       const mapped = tr.mapping
       const from = mapped.map(state.selection.from)
       const to = mapped.map(state.selection.to)
@@ -101,7 +102,7 @@ function liftOutOfLists(state: EditorState, dispatch?: (tr: Transaction) => void
   }
   if (lifted && dispatch) {
     const tr = state.tr
-    for (const t of trs) for (const step of t.steps) tr.step(step)
+    for (const t of trs) append(tr, t)
     dispatch(tr.scrollIntoView())
   }
   return lifted
@@ -230,14 +231,30 @@ export const codeBlockCommand: Command = onLines((state, dispatch) => {
   return true
 })
 
-/** A horizontal rule after the line the cursor is on. */
-export const horizontalRuleCommand: Command = onLines((state, dispatch) => {
+/**
+ * A horizontal rule after the line the cursor is on: in a paragraph at the top level, the lines
+ * after it go below the rule; elsewhere (a quote, a list) the rule goes after that whole block.
+ */
+export const horizontalRuleCommand: Command = (state, dispatch) => {
   const {$from} = state.selection
-  const blockIndex = $from.index(0)
-  const after = $from.depth === 0 ? $from.pos : $from.after(1)
   if (dispatch) {
     const tr = state.tr
-    const atEnd = blockIndex === state.doc.childCount - 1
+    let after = $from.depth === 0 ? $from.pos : $from.after(1)
+    let atEnd = $from.index(0) === state.doc.childCount - 1
+    // The line break ending the cursor's line, if a top-level paragraph's lines go on after it.
+    let lineEnd = -1
+    if ($from.depth === 1 && $from.parent.type === nodes.paragraph) {
+      $from.parent.forEach((child, offset) => {
+        const at = $from.start() + offset
+        if (lineEnd < 0 && child.type === nodes.hard_break && at >= $from.pos) lineEnd = at
+      })
+    }
+    if (lineEnd >= 0) {
+      tr.delete(lineEnd, lineEnd + 1)
+      tr.split(lineEnd)
+      after = lineEnd + 1
+      atEnd = false
+    }
     const insert = atEnd ? [nodes.horizontal_rule.create(), nodes.paragraph.create()] : [nodes.horizontal_rule.create()]
     tr.insert(after, insert)
     const target = Math.min(after + 2, tr.doc.content.size)
@@ -245,7 +262,7 @@ export const horizontalRuleCommand: Command = onLines((state, dispatch) => {
     dispatch(tr.scrollIntoView())
   }
   return true
-})
+}
 
 /** The extent of the link mark around `pos` (the link the cursor is in), if any. */
 export function linkRangeAt(state: EditorState, pos: number): {from: number; to: number; mark: Mark} | null {

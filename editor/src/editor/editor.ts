@@ -43,7 +43,7 @@ import {
 import {decorationState, decorationsKey, decorationsPlugin} from './decorations'
 import {anchorPosition} from './links'
 import {structurePlugin, toolbarPlugin} from './plugins'
-import {backspaceToLineBreak, deleteToLineBreak, enterNewLine, onLines} from './lines'
+import {backspaceToLineBreak, deleteToLineBreak, enterNewLine} from './lines'
 import {enterShortcut, markdownInputRules} from './rules'
 import {applySettings, type EditorSettings, settings} from './settings'
 import {suggestPlugin} from './suggest'
@@ -262,7 +262,7 @@ export class PitchstoneEditor {
             return true
           },
           // A new line in a paragraph, as in Obsidian (lines.ts); a list item, a cell below.
-          Enter: chainCommands(onLines(enterShortcut), enterInTable, splitItemCommand, enterNewLine),
+          Enter: chainCommands(enterShortcut, enterInTable, splitItemCommand, enterNewLine),
           'Shift-Enter': hardBreakCommand,
           Backspace: chainCommands(undoInputRule, backspaceAtStart, backspaceToLineBreak),
           Delete: deleteToLineBreak,

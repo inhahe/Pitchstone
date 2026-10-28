@@ -467,25 +467,56 @@ test.describe('pictures stored with notes', () => {
 test.describe('Enter starts a new line, as in Obsidian', () => {
   /**
    * Puts the caret right after (or before) the first `text` in the note, as a tap does, and waits
-   * until the browser has reported it, which is when the editor takes it up.
+   * until the editor has taken it up.
+   *
+   * Just after the editor gains focus, ProseMirror puts its own selection back over one the page
+   * sets without a tap or a click: at the start of the document for 200 ms, anywhere until its
+   * focus timer has run. So the caret is placed again until it stays.
    */
   async function caret(page: Page, text: string, where: 'after' | 'before' = 'after') {
-    await page.evaluate(
-      ([t, w]) =>
-        new Promise<void>((resolve, reject) => {
-          const walker = document.createTreeWalker(document.querySelector('.ProseMirror')!, NodeFilter.SHOW_TEXT)
-          for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-            const i = n.textContent!.indexOf(t)
-            if (i < 0) continue
-            // After the editor's own listener, which was there first.
-            document.addEventListener('selectionchange', () => setTimeout(resolve, 0), {once: true})
-            getSelection()!.collapse(n, w === 'after' ? i + t.length : i)
-            return
-          }
-          reject(new Error('not in the note: ' + t))
-        }),
-      [text, where] as const,
-    )
+    for (let attempt = 1; ; attempt++) {
+      const stayed = await page.evaluate(
+        ([t, w]) =>
+          new Promise<boolean>((resolve, reject) => {
+            const editor = document.querySelector('.ProseMirror')!
+            // A point as the text and line breaks before it: the editor may write the same
+            // point another way (in the paragraph rather than its text, say).
+            const place = (node: Node, offset: number) => {
+              const r = document.createRange()
+              r.setStart(editor, 0)
+              r.setEnd(node, offset)
+              return `${r.toString().length}:${r.cloneContents().querySelectorAll('br').length}`
+            }
+            const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+            for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+              const i = n.textContent!.indexOf(t)
+              if (i < 0) continue
+              const offset = w === 'after' ? i + t.length : i
+              const target = place(n, offset)
+              const sel = getSelection()!
+              const there = () => sel.rangeCount > 0 && sel.isCollapsed && place(sel.anchorNode!, sel.anchorOffset) === target
+              // There already: no change to report.
+              if (there()) return resolve(true)
+              // The report of this change, not one still pending from before, and after the
+              // editor's own listener, which was there first.
+              const asked = performance.now()
+              const reported = (e: Event) => {
+                if (e.timeStamp < asked) return
+                document.removeEventListener('selectionchange', reported)
+                setTimeout(() => resolve(there()), 0)
+              }
+              document.addEventListener('selectionchange', reported)
+              setTimeout(() => reject(new Error('the caret move was never reported')), 2000)
+              sel.collapse(n, offset)
+              return
+            }
+            reject(new Error('not in the note: ' + t))
+          }),
+        [text, where] as const,
+      )
+      if (stayed) return
+      if (attempt === 5) throw new Error(`the caret would not stay ${where} ${text}`)
+    }
   }
 
   /** The caret's top, in pixels. */
@@ -595,6 +626,52 @@ test.describe('Enter starts a new line, as in Obsidian', () => {
     await page.keyboard.press('Enter')
     await page.keyboard.type('after')
     expect(await markdown(page)).toBe('> quoted\n> more\n\nafter\n')
+  })
+
+  test('a shortcut typed at the start of a line makes only that line the block', async ({page}) => {
+    await open(page, 'Groceries\nmilk\neggs\n')
+    await caret(page, 'milk', 'before')
+    await page.keyboard.type('# ')
+    expect(await markdown(page)).toBe('Groceries\n\n# milk\n\neggs\n')
+  })
+
+  test('a shortcut typed at the start of a paragraph makes only its first line the block', async ({page}) => {
+    await open(page, 'Title\nbody\n')
+    await caret(page, 'Title', 'before')
+    await page.keyboard.type('# ')
+    expect(await markdown(page)).toBe('# Title\n\nbody\n')
+  })
+
+  test('a number other than 1 after a line break is not a list, as in markdown', async ({page}) => {
+    await open(page)
+    await page.keyboard.type('Born in')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('1990. Then')
+    await expect(page.locator('.ProseMirror ol')).toHaveCount(0)
+    await expect(page.locator('.ProseMirror > p')).toHaveCount(1)
+  })
+
+  test('the toolbar formats an empty line between lines, where the cursor is', async ({page}) => {
+    await open(page, 'one\ntwo\n')
+    await caret(page, 'one')
+    await page.keyboard.press('Enter')
+    await command(page, 'bulletList')
+    await page.keyboard.type('x')
+    expect(await markdown(page)).toBe('one\n\n- x\n\ntwo\n')
+  })
+
+  test('a divider goes after the cursor line, and splits nothing before it', async ({page}) => {
+    await open(page, 'one\ntwo\nthree\n')
+    await caret(page, 'two')
+    await command(page, 'horizontalRule')
+    expect(await markdown(page)).toBe('one\ntwo\n\n---\n\nthree\n')
+  })
+
+  test('a heading in a list item keeps its lines apart, as words', async ({page}) => {
+    await open(page, '- milk\n  eggs\n')
+    await caret(page, 'milk')
+    await command(page, 'heading', {level: 2})
+    expect(await markdown(page)).toBe('- ## milk eggs\n')
   })
 
   test('the toolbar formats the line the cursor is on, not the whole paragraph', async ({page}) => {
