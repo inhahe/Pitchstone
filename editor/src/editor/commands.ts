@@ -17,6 +17,7 @@ import {
   TableMap,
 } from 'prosemirror-tables'
 import {atomMarkdown} from '../markdown/serialize'
+import {onLines} from './lines'
 import {schema} from '../schema'
 
 const {nodes, marks} = schema
@@ -43,9 +44,12 @@ function flattenBreaks(tr: Transaction, from: number, to: number): void {
   for (const pos of breaks.reverse()) tr.replaceWith(pos, pos + 1, schema.text(' '))
 }
 
-/** Level 0 makes a paragraph; the current heading level toggles back to a paragraph. */
+/**
+ * Level 0 makes a paragraph; the current heading level toggles back to a paragraph. Of a
+ * paragraph's lines, only those selected become headings.
+ */
 export function headingCommand(level: number): Command {
-  return (state, dispatch) => {
+  return onLines((state, dispatch) => {
     const {$from} = state.selection
     const current = $from.parent
     if (level === 0 || (current.type === nodes.heading && current.attrs.level === level)) {
@@ -62,7 +66,7 @@ export function headingCommand(level: number): Command {
       dispatch(tr.scrollIntoView())
     }
     return true
-  }
+  })
 }
 
 /** Whether the list item around the selection is a task item. */
@@ -105,10 +109,11 @@ function liftOutOfLists(state: EditorState, dispatch?: (tr: Transaction) => void
 
 /**
  * Toggles a list of `type` (as a task list when `task`): turns it off when the selection is
- * already in such a list, converts a list of another kind, or wraps the selection in a new list.
+ * already in such a list, converts a list of another kind, or wraps the selection in a new list,
+ * an item a line.
  */
 export function listCommand(type: NodeType, task = false): Command {
-  return (state, dispatch) => {
+  return onLines((state, dispatch) => {
     const list = findAncestor(state.selection.$from, isList)
     if (list) {
       const sameKind = list.node.type === type && inTaskItem(state) === task
@@ -132,16 +137,16 @@ export function listCommand(type: NodeType, task = false): Command {
       dispatch(tr.scrollIntoView())
     }
     return true
-  }
+  })
 }
 
 export const indentCommand: Command = chainCommands(goToNextCell(1), sinkListItem(nodes.list_item))
 export const outdentCommand: Command = chainCommands(goToNextCell(-1), liftListItem(nodes.list_item))
 
-export const blockquoteCommand: Command = (state, dispatch) => {
+export const blockquoteCommand: Command = onLines((state, dispatch) => {
   if (findAncestor(state.selection.$from, (n) => n.type === nodes.blockquote)) return lift(state, dispatch)
   return wrapIn(nodes.blockquote)(state, dispatch)
-}
+})
 
 /** Whether `node` is an inline atom with markdown of its own (not text, not a line break). */
 const isMarkdownAtom = (node: Node) => node.isInline && node.isAtom && !node.isText && node.type !== nodes.hard_break
@@ -170,7 +175,7 @@ function atomsToText(tr: Transaction, from: number, to: number): void {
  * leaving a code block turns its lines back into one paragraph with line breaks. Formatting
  * is dropped; links to notes, images and inline HTML stay, as their markdown.
  */
-export const codeBlockCommand: Command = (state, dispatch) => {
+export const codeBlockCommand: Command = onLines((state, dispatch) => {
   const {$from, $to} = state.selection
   if ($from.parent.type === nodes.code_block) {
     if (dispatch) {
@@ -223,9 +228,10 @@ export const codeBlockCommand: Command = (state, dispatch) => {
     dispatch(tr.scrollIntoView())
   }
   return true
-}
+})
 
-export const horizontalRuleCommand: Command = (state, dispatch) => {
+/** A horizontal rule after the line the cursor is on. */
+export const horizontalRuleCommand: Command = onLines((state, dispatch) => {
   const {$from} = state.selection
   const blockIndex = $from.index(0)
   const after = $from.depth === 0 ? $from.pos : $from.after(1)
@@ -239,7 +245,7 @@ export const horizontalRuleCommand: Command = (state, dispatch) => {
     dispatch(tr.scrollIntoView())
   }
   return true
-}
+})
 
 /** The extent of the link mark around `pos` (the link the cursor is in), if any. */
 export function linkRangeAt(state: EditorState, pos: number): {from: number; to: number; mark: Mark} | null {

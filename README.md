@@ -10,12 +10,18 @@ folder) as one markdown file per note.
 The editor shows formatting as you write (bold looks bold, a heading looks like a heading),
 and stores each note as markdown.
 
+- **Enter starts a new line**, as in Obsidian: one row down, and one newline in the file.
+  Enter on an empty line makes a blank line, which separates paragraphs (and leaves a quote).
+  Backspace at the start of a line after a blank line removes the blank line. In a list, Enter
+  starts the next item; in a table, it moves to the cell below.
+
 - **Formatting toolbar** above the keyboard: undo/redo, heading level, bold, italic,
   strikethrough, highlight, inline code, bulleted/numbered/check lists, indent/outdent, link,
   link to a note, quote, code block, table (with row/column actions when inside one), divider,
   footnote, clear formatting. Buttons light up for the formatting at the cursor.
 - **Markdown shortcuts** (Settings → Markdown shortcuts, on by default): type markdown and it
-  formats on the fly.
+  formats on the fly. Those for headings, lists, quotes, code blocks and dividers work at the
+  start of any line, and the line becomes that block; so do the toolbar's buttons for them.
 
   | Type | Get |
   | --- | --- |

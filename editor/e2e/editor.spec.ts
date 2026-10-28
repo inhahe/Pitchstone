@@ -1,4 +1,4 @@
-import {expect, test} from '@playwright/test'
+import {expect, type Page, test} from '@playwright/test'
 import {command, FILE_PAGE, flush, markdown, messages, open, PNG, servePictures, typeComposed} from './helpers'
 
 test.describe('markdown shortcuts on', () => {
@@ -107,7 +107,7 @@ test.describe('markdown shortcuts on', () => {
     await open(page, '[[Note]]---\n')
     await page.keyboard.press('Enter')
     await page.keyboard.type('x')
-    expect(await markdown(page)).toBe('[[Note]]---\n\nx\n')
+    expect(await markdown(page)).toBe('[[Note]]---\nx\n')
   })
 
   test('pasting markdown formats it', async ({page}) => {
@@ -142,8 +142,9 @@ test.describe('markdown shortcuts off', () => {
     }
     const md = await markdown(page)
     await open(page, md, {shortcuts: false})
-    // The empty paragraph left after the last Enter is a trailing blank line, which is not kept.
-    await expect(page.locator('.ProseMirror > p')).toHaveText(['- a', '1. b', '> c', '---', '```'])
+    // Lines of one paragraph; the line break left after the last Enter, at its end, is not kept.
+    await expect(page.locator('.ProseMirror > p')).toHaveCount(1)
+    expect(await page.locator('.ProseMirror > p').evaluate((p) => (p as HTMLElement).innerText)).toBe('- a\n1. b\n> c\n---\n```')
   })
 
   test('the toolbar still formats', async ({page}) => {
@@ -460,5 +461,161 @@ test.describe('pictures stored with notes', () => {
     await command(page, 'insertWikilink', {target: 'Pasted image 1.png', embed: true})
     expect(await markdown(page)).toBe('before![[Pasted image 1.png]]\n')
     await expect.poll(() => page.locator('.ProseMirror .embed-image img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1)
+  })
+})
+
+test.describe('Enter starts a new line, as in Obsidian', () => {
+  /**
+   * Puts the caret right after (or before) the first `text` in the note, as a tap does, and waits
+   * until the browser has reported it, which is when the editor takes it up.
+   */
+  async function caret(page: Page, text: string, where: 'after' | 'before' = 'after') {
+    await page.evaluate(
+      ([t, w]) =>
+        new Promise<void>((resolve, reject) => {
+          const walker = document.createTreeWalker(document.querySelector('.ProseMirror')!, NodeFilter.SHOW_TEXT)
+          for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+            const i = n.textContent!.indexOf(t)
+            if (i < 0) continue
+            // After the editor's own listener, which was there first.
+            document.addEventListener('selectionchange', () => setTimeout(resolve, 0), {once: true})
+            getSelection()!.collapse(n, w === 'after' ? i + t.length : i)
+            return
+          }
+          reject(new Error('not in the note: ' + t))
+        }),
+      [text, where] as const,
+    )
+  }
+
+  /** The caret's top, in pixels. */
+  const caretTop = (page: Page) => page.evaluate(() => getSelection()!.getRangeAt(0).getBoundingClientRect().top)
+
+  test('Enter moves the cursor down one line, in the same paragraph', async ({page}) => {
+    await open(page)
+    await page.keyboard.type('one')
+    const before = await caretTop(page)
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('two')
+    const moved = (await caretTop(page)) - before
+    const lineHeight = await page.locator('.ProseMirror p').evaluate((p) => parseFloat(getComputedStyle(p).lineHeight))
+    expect(Math.abs(moved - lineHeight)).toBeLessThan(2)
+    expect(await markdown(page)).toBe('one\ntwo\n')
+    await expect(page.locator('.ProseMirror > p')).toHaveCount(1)
+  })
+
+  test('Enter on an empty line makes a blank line: a new paragraph', async ({page}) => {
+    await open(page)
+    await page.keyboard.type('one')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('two')
+    expect(await markdown(page)).toBe('one\n\ntwo\n')
+    await expect(page.locator('.ProseMirror > p')).toHaveText(['one', 'two'])
+  })
+
+  test('Enter in the middle of a line breaks it', async ({page}) => {
+    await open(page, 'onetwo\n')
+    await caret(page, 'one')
+    await page.keyboard.press('Enter')
+    expect(await markdown(page)).toBe('one\ntwo\n')
+  })
+
+  test('Enter at the end of a line adds an empty line below, and Enter there separates paragraphs', async ({page}) => {
+    await open(page, 'one\ntwo\n')
+    await caret(page, 'one')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('new')
+    expect(await markdown(page)).toBe('one\nnew\ntwo\n')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.press('Backspace')
+    // As on Android, the editor reads the deletions from the page, a moment later.
+    await expect.poll(() => markdown(page)).toBe('one\n\\\ntwo\n')
+    await page.keyboard.press('Enter')
+    // The cursor is on a line of its own between the two paragraphs.
+    await expect(page.locator('.ProseMirror > p')).toHaveText(['one', '', 'two'])
+    await page.keyboard.type('middle')
+    expect(await markdown(page)).toBe('one\n\nmiddle\n\ntwo\n')
+  })
+
+  test('Backspace at the start of a paragraph removes the blank line, then the line break', async ({page}) => {
+    await open(page, 'one\n\ntwo\n')
+    await caret(page, 'two', 'before')
+    await page.keyboard.press('Backspace')
+    expect(await markdown(page)).toBe('one\ntwo\n')
+    await page.keyboard.press('Backspace')
+    expect(await markdown(page)).toBe('onetwo\n')
+  })
+
+  test('Delete at the end of a paragraph removes the blank line after it', async ({page}) => {
+    await open(page, 'one\n\ntwo\n')
+    await caret(page, 'one')
+    await page.keyboard.press('Delete')
+    expect(await markdown(page)).toBe('one\ntwo\n')
+  })
+
+  test('markdown typed at the start of a line formats that line', async ({page}) => {
+    const cases: [string, string, string][] = [
+      ['- ', 'milk', 'Groceries\n\n- milk\n'],
+      ['1. ', 'first', 'Groceries\n\n1. first\n'],
+      ['# ', 'Title', 'Groceries\n\n# Title\n'],
+      ['> ', 'quoted', 'Groceries\n\n> quoted\n'],
+      ['[ ] ', 'task', 'Groceries\n\n- [ ] task\n'],
+    ]
+    for (const [syntax, text, expected] of cases) {
+      await open(page)
+      await page.keyboard.type('Groceries')
+      await page.keyboard.press('Enter')
+      await page.keyboard.type(syntax + text)
+      expect(await markdown(page), syntax).toBe(expected)
+    }
+  })
+
+  test('--- and a code fence on a line of their own, then Enter, still make a rule and a code block', async ({page}) => {
+    await open(page)
+    await page.keyboard.type('above')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('---')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('below')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('```js')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('let a = 1')
+    expect(await markdown(page)).toBe('above\n\n---\n\nbelow\n\n```js\nlet a = 1\n```\n')
+  })
+
+  test('two Enters leave a quote', async ({page}) => {
+    await open(page)
+    await page.keyboard.type('> quoted')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('more')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('after')
+    expect(await markdown(page)).toBe('> quoted\n> more\n\nafter\n')
+  })
+
+  test('the toolbar formats the line the cursor is on, not the whole paragraph', async ({page}) => {
+    await open(page, 'one\ntwo\nthree\n')
+    await caret(page, 'two')
+    await command(page, 'heading', {level: 2})
+    expect(await markdown(page)).toBe('one\n\n## two\n\nthree\n')
+    await open(page, 'one\ntwo\nthree\n')
+    await caret(page, 'two')
+    await command(page, 'bulletList')
+    expect(await markdown(page)).toBe('one\n\n- two\n\nthree\n')
+  })
+
+  test('with shortcuts off, Enter still starts a line, and line-start symbols stay text', async ({page}) => {
+    await open(page, '', {shortcuts: false})
+    await page.keyboard.type('Groceries')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('- milk')
+    const md = await markdown(page)
+    await open(page, md, {shortcuts: false})
+    await expect(page.locator('.ProseMirror > p')).toHaveCount(1)
+    expect(await page.locator('.ProseMirror > p').evaluate((p) => (p as HTMLElement).innerText)).toBe('Groceries\n- milk')
   })
 })

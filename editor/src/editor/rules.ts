@@ -12,6 +12,7 @@ import type {MarkType, Node} from 'prosemirror-model'
 import {type EditorState, type Plugin, TextSelection, type Transaction} from 'prosemirror-state'
 import {findWrapping} from 'prosemirror-transform'
 import {schema} from '../schema'
+import {atLineStarts} from './lines'
 import {settings} from './settings'
 
 const {nodes, marks} = schema
@@ -115,18 +116,20 @@ const wikilink = (m: RegExpMatchArray) => {
 
 export function markdownRules(): InputRule[] {
   const rules = [
-    // Block structure, at the start of a textblock.
-    headingRule(),
-    wrappingInputRule(/^\s*>[ \u00a0]$/, nodes.blockquote),
-    wrappingInputRule(/^\s*([-+*])[ \u00a0]$/, nodes.bullet_list),
-    wrappingInputRule(
-      /^(\d{1,9})[.)][ \u00a0]$/,
-      nodes.ordered_list,
-      (m) => ({order: Number(m[1])}),
-      (m, node) => node.childCount + node.attrs.order === Number(m[1]),
-    ),
-    taskRule(),
-    codeBlockRule(),
+    // Block structure, at the start of a textblock, or of a line in a paragraph.
+    ...[
+      headingRule(),
+      wrappingInputRule(/^\s*>[ \u00a0]$/, nodes.blockquote),
+      wrappingInputRule(/^\s*([-+*])[ \u00a0]$/, nodes.bullet_list),
+      wrappingInputRule(
+        /^(\d{1,9})[.)][ \u00a0]$/,
+        nodes.ordered_list,
+        (m) => ({order: Number(m[1])}),
+        (m, node) => node.childCount + node.attrs.order === Number(m[1]),
+      ),
+      taskRule(),
+      codeBlockRule(),
+    ].flatMap(atLineStarts),
 
     // Inline atoms.
     nodeRule(/(^|[^\\])((!?)\[\[([^[\]\n|]+)(?:\|([^[\]\n]*))?\]\])$/, wikilink),
@@ -176,7 +179,8 @@ export function markdownInputRules(): Plugin {
 
 /**
  * Enter on a paragraph that holds only `---` (or `***`, `___`) makes a horizontal rule, and on
- * "```lang" a code block. Returns false when it does not apply.
+ * "```lang" a code block. Returns false when it does not apply. (For a line of a paragraph,
+ * with [onLines].)
  */
 export function enterShortcut(state: EditorState, dispatch?: (tr: Transaction) => void): boolean {
   if (!settings.markdownShortcuts) return false
