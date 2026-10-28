@@ -86,6 +86,15 @@ test.describe('markdown shortcuts on', () => {
     expect(await markdown(page)).toBe('see [[Alpha project]] ok\n')
   })
 
+  test("the keyboard's Enter picks the highlighted suggestion", async ({page}) => {
+    await open(page, '', {titles: ['Alpha project', 'Beta', 'Gamma']})
+    await page.keyboard.type('see [[alp')
+    await expect(page.locator('.suggest .item').first()).toHaveText('Alpha project')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type(' ok')
+    expect(await markdown(page)).toBe('see [[Alpha project]] ok\n')
+  })
+
   test('picking a title with # in it links by its link name and shows the title', async ({page}) => {
     await open(page, '', {titles: ['C# notes']})
     await page.keyboard.type('[[c')
@@ -567,6 +576,39 @@ test.describe('Enter starts a new line, as in Obsidian', () => {
     await expect(page.locator('.ProseMirror > p')).toHaveCount(1)
     await page.keyboard.type('c')
     await expect.poll(() => markdown(page)).toBe('B\nc\n')
+  })
+
+  test("Enter after a deletion that changed nothing keeps its line break", async ({page}) => {
+    await open(page, 'ab\n')
+    await page.evaluate(() => {
+      const editor = document.querySelector('.ProseMirror')!
+      // A keyboard deletion the browser did not carry out (ProseMirror then presses Backspace
+      // itself, 50 ms on, unless the page has changed meanwhile)...
+      editor.dispatchEvent(new InputEvent('beforeinput', {inputType: 'deleteContentBackward', bubbles: true, cancelable: true}))
+      // ...then the keyboard's Enter, the browser's own unless cancelled.
+      editor.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true} as KeyboardEventInit))
+      const enter = new InputEvent('beforeinput', {inputType: 'insertParagraph', bubbles: true, cancelable: true})
+      if (editor.dispatchEvent(enter)) document.execCommand('insertParagraph')
+      return new Promise((resolve) => setTimeout(resolve, 150))
+    })
+    await page.keyboard.type('c')
+    expect(await markdown(page)).toBe('ab\nc\n')
+  })
+
+  test('a selection change just after Enter does not press Enter again', async ({page}) => {
+    await open(page, 'ab\n')
+    await page.evaluate(() => {
+      const editor = document.querySelector('.ProseMirror')!
+      editor.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true} as KeyboardEventInit))
+      const enter = new InputEvent('beforeinput', {inputType: 'insertParagraph', bubbles: true, cancelable: true})
+      if (editor.dispatchEvent(enter)) document.execCommand('insertParagraph')
+      // The keyboard moving the cursor at once, as it may after the text changes (not to the
+      // note's start, which ProseMirror would undo just after focus).
+      getSelection()!.collapse(editor.querySelector('p')!.firstChild!, 1)
+      return new Promise((resolve) => setTimeout(resolve, 150))
+    })
+    await expect(page.locator('.ProseMirror > p')).toHaveCount(1)
+    await expect(page.locator('.ProseMirror p br:not(.ProseMirror-trailingBreak)')).toHaveCount(1)
   })
 
   test('Enter in the middle of a line breaks it', async ({page}) => {

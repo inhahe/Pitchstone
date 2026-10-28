@@ -269,7 +269,7 @@ export class PitchstoneEditor {
           'Shift-Tab': chainCommands(outdentCommand, () => true),
         }),
         keymap(baseKeymap),
-        androidEnterPlugin(enterCommand),
+        androidEnterPlugin(),
         history({newGroupDelay: 600}),
         dropCursor(),
         gapCursor(),

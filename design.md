@@ -133,8 +133,13 @@ documents pass.
   break back as an Enter; but Gboard often corrects the word first (a deletion, which
   ProseMirror reads only 20 ms later, and an insertion), the two are then read together, and
   the browser's paragraph break stays. The plugin takes the `insertParagraph` input itself:
-  reads what the page holds so far (prosemirror-view's internal `domObserver.forceFlush`), runs
-  `enterCommand`, and cancels the browser's.
+  reads what the page holds so far, sends Enter to the key handlers as ProseMirror does with a
+  paragraph break it reads back (so the `[[` suggestions still take it first), and cancels the
+  browser's. It then tells ProseMirror what that break would have: the key is dealt with (no
+  second Enter for a selection change within 100 ms) and the page changed (no fallback
+  Backspace for a deletion just before). These are prosemirror-view internals
+  (`domObserver`, `input`), checked on use; without them Enter is left to the browser, with a
+  console error.
 - **Links** (`links.ts`): which notes exist is decided by the app's own rules (see Data): the
   app sends every note's lookup keys, and `noteExists` matches a link's whole name, then its
   `folder/note` path key. A picked suggestion is written as the title's link name (no `#|^[]`),

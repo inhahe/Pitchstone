@@ -4,7 +4,8 @@
 import {redoDepth, undoDepth} from 'prosemirror-history'
 import type {Node} from 'prosemirror-model'
 import {liftListItem, sinkListItem} from 'prosemirror-schema-list'
-import {type Command, type EditorState, Plugin} from 'prosemirror-state'
+import {type EditorState, Plugin} from 'prosemirror-state'
+import type {EditorView} from 'prosemirror-view'
 import {isInTable} from 'prosemirror-tables'
 import {schema} from '../schema'
 import {post, type ToolbarState} from './bridge'
@@ -15,24 +16,54 @@ const {nodes, marks} = schema
 /** Android, as prosemirror-view tells it (its `android`, which it does not export). */
 const ANDROID = typeof navigator !== 'undefined' && /Android \d/.test(navigator.userAgent)
 
+/** What androidEnterPlugin uses of prosemirror-view that is not public. */
+interface ViewInternals {
+  domObserver: {forceFlush(): void; flush(): void}
+  input: {lastKeyCode: number | null; domChangeCount: number}
+}
+
+let internalsMissing = false
+
+/** `view`'s internals, or null (said once on the console) if this prosemirror-view lacks them. */
+function internals(view: EditorView): ViewInternals | null {
+  const v = view as unknown as Partial<ViewInternals>
+  if (
+    typeof v.domObserver?.forceFlush === 'function' &&
+    typeof v.domObserver.flush === 'function' &&
+    typeof v.input?.domChangeCount === 'number' &&
+    'lastKeyCode' in v.input
+  ) {
+    return v as ViewInternals
+  }
+  if (!internalsMissing) console.error("prosemirror-view internals changed: the keyboard's Enter is left to the browser")
+  internalsMissing = true
+  return null
+}
+
 /**
- * The keyboard's Enter on Android. ProseMirror leaves it to the browser there (an
- * `insertParagraph` input) and reads the paragraph break back from the page as an Enter. But a
- * keyboard often changes the word before it first (autocorrect, a capital letter), and after a
- * deletion ProseMirror waits 20 ms before reading the page: then both changes are read at once,
- * the Enter is not recognised, and the browser's paragraph break stays. So it is taken here:
- * what the page holds so far is read first, then `enter` runs in place of the browser's.
+ * The keyboard's Enter on Android, an `insertParagraph` input, taken from the browser: the
+ * changes on the page so far are read first, then Enter goes to the editor's key handlers, as a
+ * key press does elsewhere (a suggestion's pick, then the keymap). Left to the browser, its
+ * paragraph break is read back later, and when the keyboard has just corrected the word before
+ * it, together with that, as a change that is not an Enter (design.md).
  */
-export function androidEnterPlugin(enter: Command): Plugin {
+export function androidEnterPlugin(): Plugin {
   return new Plugin({
     props: {
       handleDOMEvents: {
         beforeinput(view, event) {
-          if (!ANDROID || (event as InputEvent).inputType !== 'insertParagraph' || view.composing) return false
-          // Not public: what ProseMirror's own key handling does before running a command.
-          ;(view as unknown as {domObserver: {forceFlush(): void}}).domObserver.forceFlush()
-          if (!enter(view.state, view.dispatch, view)) return false
+          if (!ANDROID || event.inputType !== 'insertParagraph' || !event.cancelable || view.composing) return false
+          const pm = internals(view)
+          if (!pm) return false
+          pm.domObserver.forceFlush()
+          pm.domObserver.flush()
+          const enter = new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true})
+          if (!view.someProp('handleKeyDown', (f) => f(view, enter))) return false
           event.preventDefault()
+          // What the browser's paragraph break would have told it: the key has been dealt with,
+          // and the page has changed (so no fallback Backspace for a deletion just before).
+          pm.input.lastKeyCode = null
+          pm.input.domChangeCount++
           return true
         },
       },
