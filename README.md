@@ -12,6 +12,7 @@ and stores each note as markdown.
 
 - **Enter starts a new line**, as in Obsidian: one row down, and one newline in the file.
   Enter on an empty line makes a blank line, which separates paragraphs (and leaves a quote).
+  An empty line left between two lines is saved as a blank line too, as Obsidian writes it.
   Backspace at the start of a line after a blank line removes the blank line. In a list, Enter
   starts the next item; in a table, it moves to the cell below.
 

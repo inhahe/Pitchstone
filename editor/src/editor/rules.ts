@@ -9,10 +9,9 @@
 
 import {InputRule, inputRules} from 'prosemirror-inputrules'
 import type {MarkType, Node} from 'prosemirror-model'
-import {type EditorState, type Plugin, TextSelection, type Transaction} from 'prosemirror-state'
-import {findWrapping} from 'prosemirror-transform'
+import {type Command, type EditorState, type Plugin, TextSelection, type Transaction} from 'prosemirror-state'
 import {schema} from '../schema'
-import {blockRule, lineBeforeCursor, onLines, textblockHandler, wrapHandler} from './lines'
+import {blockRule, lineBeforeCursor, onLines, ruleOnEnter, textblockHandler, wrapHandler} from './lines'
 import {settings} from './settings'
 
 const {nodes, marks} = schema
@@ -71,32 +70,24 @@ function taskRule(): InputRule {
   return blockRule(/\[([ xX]?)\][ \u00a0]$/, (state, match, start, end) => {
     const checked = match[1] === 'x' || match[1] === 'X'
     const $start = state.doc.resolve(start)
-    const para = $start.parent
-    if (para.type !== nodes.paragraph) return null
+    if ($start.parent.type !== nodes.paragraph) return null
     const itemDepth = $start.depth - 1
     const item = $start.node(itemDepth)
-    const tr = state.tr.delete(start, end)
-    if (item && item.type === nodes.list_item && $start.index(itemDepth) === 0) {
-      tr.setNodeMarkup($start.before(itemDepth), null, {...item.attrs, checked})
-      return tr
+    if (item.type === nodes.list_item && $start.index(itemDepth) === 0) {
+      return state.tr.delete(start, end).setNodeMarkup($start.before(itemDepth), null, {...item.attrs, checked})
     }
-    // Not in a list yet: wrap the paragraph in a bullet list whose item is a task.
-    const $para = tr.doc.resolve(tr.mapping.map(start))
-    const range = $para.blockRange()
-    if (!range) return null
-    const wrapping = findWrapping(range, nodes.bullet_list)
-    if (!wrapping) return null
-    tr.wrap(range, wrapping)
+    // Not in a list yet: a bullet list (as `- ` makes) whose item is a task.
+    const tr = toBulletList(state, match, start, end)
+    if (!tr) return null
     const $inner = tr.doc.resolve(tr.mapping.map(start))
     for (let d = $inner.depth; d > 0; d--) {
-      if ($inner.node(d).type === nodes.list_item) {
-        tr.setNodeMarkup($inner.before(d), null, {checked})
-        break
-      }
+      if ($inner.node(d).type === nodes.list_item) return tr.setNodeMarkup($inner.before(d), null, {checked})
     }
-    return tr
+    return null
   })
 }
+
+const toBulletList = wrapHandler(nodes.bullet_list)
 
 /** "```lang " at the start of a line: a code block. */
 function codeBlockRule(): InputRule {
@@ -119,7 +110,7 @@ export function markdownRules(): InputRule[] {
     // Block structure, at the start of a textblock, or of a line in a paragraph (lines.ts).
     headingRule(),
     blockRule(/\s*>[ \u00a0]$/, wrapHandler(nodes.blockquote)),
-    blockRule(/\s*([-+*])[ \u00a0]$/, wrapHandler(nodes.bullet_list)),
+    blockRule(/\s*([-+*])[ \u00a0]$/, toBulletList),
     blockRule(
       /(\d{1,9})[.)][ \u00a0]$/,
       wrapHandler(
@@ -184,49 +175,27 @@ const FENCE_LINE = /^```([^`\s]*)$/
 
 /**
  * Enter at the end of a line that holds only `---` (or `***`, `___`) makes a horizontal rule,
- * and on "```lang" a code block; the line becomes a paragraph of its own first. Returns false
- * when it does not apply.
+ * and on "```lang" a code block. The line must be plain typed text (formatted dashes or
+ * backticks are not markdown syntax). Returns false when it does not apply.
  */
 export function enterShortcut(state: EditorState, dispatch?: (tr: Transaction) => void): boolean {
   if (!settings.markdownShortcuts) return false
-  // Looked at before anything is split: most Enters are not these.
   const line = lineBeforeCursor(state)
-  if (line === null || !(RULE_LINE.test(line) || FENCE_LINE.test(line))) return false
-  return onLines(paragraphShortcut)(state, dispatch)
+  if (!line) return false
+  if (RULE_LINE.test(line.text)) return ruleOnEnter(line.start)(state, dispatch)
+  const fence = FENCE_LINE.exec(line.text)
+  return !!fence && onLines(fenceOnEnter(fence[1]))(state, dispatch)
 }
 
-/** [enterShortcut] on a paragraph that holds only the line. */
-function paragraphShortcut(state: EditorState, dispatch?: (tr: Transaction) => void): boolean {
+/** The cursor's paragraph, the fence's line on its own, becomes a code block in `language`. */
+const fenceOnEnter = (language: string): Command => (state, dispatch) => {
   const {$cursor} = state.selection as TextSelection
   if (!$cursor) return false
-  const para = $cursor.parent
-  if (para.type !== nodes.paragraph || $cursor.parentOffset !== para.content.size) return false
-  // Only plain typed text: textContent leaves out links to notes and other atoms, and
-  // formatted dashes or backticks are not markdown syntax.
-  let plain = true
-  para.forEach((n) => {
-    if (!n.isText || n.marks.length) plain = false
-  })
-  if (!plain) return false
-  const text = para.textContent
-  const start = $cursor.before()
-  const end = $cursor.after()
-  if (RULE_LINE.test(text)) {
-    if (dispatch) {
-      const tr = state.tr.replaceWith(start, end, [nodes.horizontal_rule.create(), nodes.paragraph.create()])
-      tr.setSelection(TextSelection.create(tr.doc, start + 2))
-      dispatch(tr.scrollIntoView())
-    }
-    return true
+  if (dispatch) {
+    const start = $cursor.before()
+    const tr = state.tr.replaceWith(start, $cursor.after(), nodes.code_block.create({language}))
+    tr.setSelection(TextSelection.create(tr.doc, start + 1))
+    dispatch(tr.scrollIntoView())
   }
-  const fence = FENCE_LINE.exec(text)
-  if (fence) {
-    if (dispatch) {
-      const tr = state.tr.replaceWith(start, end, nodes.code_block.create({language: fence[1]}))
-      tr.setSelection(TextSelection.create(tr.doc, start + 1))
-      dispatch(tr.scrollIntoView())
-    }
-    return true
-  }
-  return false
+  return true
 }

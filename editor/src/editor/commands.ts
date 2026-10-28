@@ -17,7 +17,7 @@ import {
   TableMap,
 } from 'prosemirror-tables'
 import {atomMarkdown} from '../markdown/serialize'
-import {append, onLines} from './lines'
+import {append, flattenBreaks, onLines, splitAfterLine} from './lines'
 import {schema} from '../schema'
 
 const {nodes, marks} = schema
@@ -34,15 +34,6 @@ export function findAncestor($pos: ResolvedPos, pred: (n: Node) => boolean): {no
 }
 
 const isList = (n: Node) => n.type === nodes.bullet_list || n.type === nodes.ordered_list
-
-/** Replaces hard breaks in the selected textblocks with spaces (for single-line blocks). */
-function flattenBreaks(tr: Transaction, from: number, to: number): void {
-  const breaks: number[] = []
-  tr.doc.nodesBetween(from, to, (node, pos) => {
-    if (node.type === nodes.hard_break) breaks.push(pos)
-  })
-  for (const pos of breaks.reverse()) tr.replaceWith(pos, pos + 1, schema.text(' '))
-}
 
 /**
  * Level 0 makes a paragraph; the current heading level toggles back to a paragraph. Of a
@@ -232,29 +223,18 @@ export const codeBlockCommand: Command = onLines((state, dispatch) => {
 })
 
 /**
- * A horizontal rule after the line the cursor is on: in a paragraph at the top level, the lines
- * after it go below the rule; elsewhere (a quote, a list) the rule goes after that whole block.
+ * A horizontal rule after the line the selection ends on (not one it only reaches the start of,
+ * as in onLines): in a paragraph at the top level, the lines after it go below the rule;
+ * elsewhere (a quote, a list) the rule goes after that whole block.
  */
 export const horizontalRuleCommand: Command = (state, dispatch) => {
-  const {$from} = state.selection
+  const sel = state.selection
+  const $end = state.doc.resolve(!sel.empty && sel.$to.nodeBefore?.type === nodes.hard_break ? sel.to - 1 : sel.to)
   if (dispatch) {
     const tr = state.tr
-    let after = $from.depth === 0 ? $from.pos : $from.after(1)
-    let atEnd = $from.index(0) === state.doc.childCount - 1
-    // The line break ending the cursor's line, if a top-level paragraph's lines go on after it.
-    let lineEnd = -1
-    if ($from.depth === 1 && $from.parent.type === nodes.paragraph) {
-      $from.parent.forEach((child, offset) => {
-        const at = $from.start() + offset
-        if (lineEnd < 0 && child.type === nodes.hard_break && at >= $from.pos) lineEnd = at
-      })
-    }
-    if (lineEnd >= 0) {
-      tr.delete(lineEnd, lineEnd + 1)
-      tr.split(lineEnd)
-      after = lineEnd + 1
-      atEnd = false
-    }
+    const between = $end.depth === 1 ? splitAfterLine(tr, $end.pos) : null
+    const after = between ?? ($end.depth === 0 ? $end.pos : tr.mapping.map($end.after(1)))
+    const atEnd = between === null && $end.index(0) === state.doc.childCount - 1
     const insert = atEnd ? [nodes.horizontal_rule.create(), nodes.paragraph.create()] : [nodes.horizontal_rule.create()]
     tr.insert(after, insert)
     const target = Math.min(after + 2, tr.doc.content.size)

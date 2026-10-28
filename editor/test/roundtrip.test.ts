@@ -82,6 +82,33 @@ describe('markdown round trip', () => {
     }
   })
 
+  it('writes the empty lines of a paragraph as blank lines', () => {
+    const br = () => hard_break.create()
+    const write = (...blocks: ReturnType<typeof p>[]) => {
+      const r = serializeMarkdown(doc.create(null, blocks))
+      expect(r.exact).toBe(true)
+      expect(parseMarkdown(r.markdown).eq(r.doc)).toBe(true)
+      return r.markdown
+    }
+    // One empty line between lines: a blank line, as in Obsidian, not a `\` line.
+    expect(write(p(s('one'), br(), br(), s('two')))).toBe('one\n\ntwo\n')
+    // Each further one is an empty paragraph, and so is one at the start.
+    expect(write(p(s('one'), br(), br(), br(), s('two')))).toBe('one\n\n\ntwo\n')
+    expect(write(p(s('a')), p(br(), s('two')))).toBe('a\n\n\ntwo\n')
+    // Single line breaks stay lines; empty lines at the end are not written.
+    expect(write(p(s('one'), br(), s('two'), br(), br()), p(s('z')))).toBe('one\ntwo\n\nz\n')
+    // A mark over the blank line ends at each line's end.
+    expect(write(p(s('a', 'strong'), br(), br(), s('b', 'strong')))).toBe('**a**\n\n**b**\n')
+    // In a quote, as paragraphs of the quote.
+    expect(serializeMarkdown(doc.create(null, [blockquote.create(null, [p(s('a'), br(), br(), s('b'))])])).markdown).toBe(
+      '> a\n>\n> b\n',
+    )
+    // In a list item a blank line would make the list loose: the empty line stays a line break.
+    const item = serializeMarkdown(doc.create(null, [bullet_list.create(null, [list_item.create(null, [p(s('a'), br(), br(), s('b'))])])]))
+    expect(item.exact).toBe(true)
+    expect(item.markdown).toBe('- a\n  \\\n  b\n')
+  })
+
   it('serializes rich content', () => {
     const d = doc.create(null, [
       heading.create({level: 2}, [s('Head')]),

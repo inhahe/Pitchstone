@@ -561,8 +561,9 @@ test.describe('Enter starts a new line, as in Obsidian', () => {
     await page.keyboard.press('Backspace')
     await page.keyboard.press('Backspace')
     await page.keyboard.press('Backspace')
-    // As on Android, the editor reads the deletions from the page, a moment later.
-    await expect.poll(() => markdown(page)).toBe('one\n\\\ntwo\n')
+    // As on Android, the editor reads the deletions from the page, a moment later. The empty
+    // line is a blank line in the file, as Obsidian writes it.
+    await expect.poll(() => markdown(page)).toBe('one\n\ntwo\n')
     await page.keyboard.press('Enter')
     // The cursor is on a line of its own between the two paragraphs.
     await expect(page.locator('.ProseMirror > p')).toHaveText(['one', '', 'two'])
@@ -672,6 +673,25 @@ test.describe('Enter starts a new line, as in Obsidian', () => {
     await caret(page, 'milk')
     await command(page, 'heading', {level: 2})
     expect(await markdown(page)).toBe('- ## milk eggs\n')
+  })
+
+  test('in a list item, a shortcut after a line break stays text', async ({page}) => {
+    for (const syntax of ['# ', '- ', '> ', '[ ] ']) {
+      await open(page, '- milk\n  eggs\n')
+      await caret(page, 'eggs', 'before')
+      await page.keyboard.type(syntax)
+      // One paragraph still: the line break shows in the text as nothing.
+      await expect(page.locator('.ProseMirror li > p'), syntax).toHaveText([`milk${syntax}eggs`])
+      await expect(page.locator('.ProseMirror li'), syntax).toHaveCount(1)
+      await expect(page.locator('.ProseMirror h1, .ProseMirror blockquote'), syntax).toHaveCount(0)
+    }
+  })
+
+  test('a heading typed at the start of a list item keeps its lines apart, as words', async ({page}) => {
+    await open(page, '- milk\n  eggs\n')
+    await caret(page, 'milk', 'before')
+    await page.keyboard.type('# ')
+    expect(await markdown(page)).toBe('- # milk eggs\n')
   })
 
   test('the toolbar formats the line the cursor is on, not the whole paragraph', async ({page}) => {

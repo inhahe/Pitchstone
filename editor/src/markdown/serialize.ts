@@ -80,7 +80,13 @@ function normalizeBlock(node: Node, ctx: NormContext): Node {
   if (node.isLeaf) return node
 
   let children: Node[] = []
-  node.forEach((child) => children.push(normalizeBlock(child, ctx)))
+  // A list item's paragraphs keep their empty lines as line breaks: a blank line there would
+  // make the whole list loose.
+  const lines = t !== nodes.list_item
+  node.forEach((child) => {
+    if (lines && child.type === nodes.paragraph) children.push(...paragraphsOfLines(child, ctx))
+    else children.push(normalizeBlock(child, ctx))
+  })
   let attrs = node.attrs
 
   if (t === nodes.doc) {
@@ -110,6 +116,45 @@ function normalizeBlock(node: Node, ctx: NormContext): Node {
   }
   const fresh = t.create(attrs, children, node.marks)
   return fresh.eq(node) ? node : fresh
+}
+
+/**
+ * A paragraph whose empty lines are written as what they are in markdown, blank lines: the
+ * lines either side of an empty line are paragraphs of their own, each further empty line
+ * between them is an empty paragraph (a spacer), and so is each one the paragraph starts with.
+ * Empty lines at its end are not written (that is where the cursor is about to type), as
+ * normalizeInline drops their line breaks. The editor splits lines the same way (lines.ts).
+ */
+function paragraphsOfLines(para: Node, ctx: NormContext): Node[] {
+  const content = normalizeInline(para, ctx)
+  const isBreak = (n: Node) => n.type === nodes.hard_break
+  if (!content.some((n, i) => isBreak(n) && (i === 0 || isBreak(content[i - 1])))) {
+    const fresh = nodes.paragraph.create(para.attrs, content)
+    return [fresh.eq(para) ? para : fresh]
+  }
+  const out: Node[] = []
+  let line: Node[] = []
+  let run: Node[] = []
+  for (const n of content) {
+    if (isBreak(n)) {
+      run.push(n)
+      continue
+    }
+    if (!line.length) {
+      for (let i = 0; i < run.length; i++) out.push(nodes.paragraph.create())
+    } else if (run.length === 1) {
+      line.push(run[0])
+    } else if (run.length > 1) {
+      // Normalized again: a mark that went on over the blank line now ends at the line's end.
+      out.push(nodes.paragraph.create(para.attrs, normalizeInline(nodes.paragraph.create(para.attrs, line), ctx)))
+      for (let i = 2; i < run.length; i++) out.push(nodes.paragraph.create())
+      line = []
+    }
+    run = []
+    line.push(n)
+  }
+  out.push(nodes.paragraph.create(para.attrs, normalizeInline(nodes.paragraph.create(para.attrs, line), ctx)))
+  return out
 }
 
 /** First row is the header, every row is as wide as the widest, alignment is per column. */

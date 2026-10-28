@@ -60,7 +60,10 @@ The editor's document model is not markdown, so two directions must agree:
   `normalizeDoc` (the changes markdown forces: whitespace moved out of bold/italic ranges,
   trailing hard breaks dropped, empty paragraphs inside lists/quotes dropped, table header row
   fixed, invalid URLs unlinked...). `exact: false` reports a contract violation (a bug); the
-  page warns once.
+  page warns once. A paragraph's empty lines (runs of hard breaks) are written as blank lines,
+  as Obsidian has them, not as `\` lines (`paragraphsOfLines`): the lines either side of one
+  become paragraphs, each further empty line between them a spacer, and so does each leading
+  one. A list item's paragraphs keep them as breaks, since a blank line would loosen the list.
 
 Escaping is minimal-first and verified. Each paragraph/heading/cell is rendered with as few
 backslashes as heuristics allow (level 0), parsed back with the real parser as a block, and
@@ -95,14 +98,20 @@ documents pass.
   quote an empty last line leaves it. Backspace at the start of a paragraph after another, and
   Delete at the end of one, turn the blank line between back into a line break. What acts a line
   at a time first makes the selected lines paragraphs of their own (`onLines`, `splitLines`):
-  the toolbar's heading, list, quote and code block, and Enter's `---`/fence shortcuts; the
-  divider goes after the cursor line, splitting off only what follows it. Each block input rule
-  is a `blockRule`, matching at the start of a textblock or after a line break (U+FFFC in the
-  text rules see); after a break it splits the line off on both sides before applying, and a
-  numbered list starts there only from 1, since in CommonMark only that interrupts a paragraph.
-  The command runs on an intermediate state built without plugins, so no
+  the toolbar's heading, list, quote and code block, and Enter's fence shortcut; a selection
+  that only reaches a line's start leaves that line out. The divider goes after the line the
+  selection ends on, splitting off only what follows it (`splitAfterLine`); `---` then Enter
+  puts the cursor on a new line under the rule, before the lines that followed. Each block
+  input rule is a `blockRule`, matching at the start of a textblock or after a line break
+  (U+FFFC in the text rules see); after a break it splits the line off on both sides before
+  applying, and a numbered list starts there only from 1, since in CommonMark only that
+  interrupts a paragraph. Every split turns a run of line breaks into what the serializer
+  reads it as (`splitAtBreaks`: a paragraph break, plus a spacer per further empty line, and
+  at a paragraph's end nothing), and Enter on an empty line does the same with one empty line
+  more, so each Enter adds one newline to the file and the editor never shows an empty line
+  the file lacks. The command runs on an intermediate state built without plugins, so no
   `appendTransaction` sees the half-done split. Paragraphs in list items keep Enter as a new
-  item, and are not split.
+  item, are not split, and a shortcut typed after a line break in one stays text.
 - **Clipboard**: copy gives markdown (shortcuts on) or plain text; pasted plain text is parsed
   as markdown only with shortcuts on.
 - **Plugins**: decorations (tags, bare URLs, missing-note links, find matches, placeholder;

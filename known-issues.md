@@ -15,6 +15,11 @@
   (`a**.b**c`) loses that punctuation character's formatting; in pathological overlaps of
   several formats, one format run may be dropped. Nothing of the text is lost.
 - A line break at the very end of a paragraph is dropped.
+- **An empty line left between two lines** is saved as a blank line, which separates
+  paragraphs, so reopening the note shows the two as paragraphs: the gap between them is then
+  the (smaller) paragraph gap rather than a full empty line. A `\` line would keep it, but
+  Obsidian shows that backslash. In a list item the empty line stays a line break (`\`), since
+  a blank line there would loosen the whole list.
 - **A `---` line inside the front matter** (Properties) ends it when the note is saved: YAML
   front matter cannot contain such a line. The lines after it become part of the note's text
   (nothing is lost, and the editor warns that the note could not be saved exactly).
