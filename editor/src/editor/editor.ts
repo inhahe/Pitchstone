@@ -41,7 +41,7 @@ import {
 } from './commands'
 import {decorationState, decorationsKey, decorationsPlugin} from './decorations'
 import {anchorPosition} from './links'
-import {structurePlugin, toolbarPlugin} from './plugins'
+import {androidEnterPlugin, structurePlugin, toolbarPlugin} from './plugins'
 import {backspaceToLineBreak, deleteToLineBreak} from './lines'
 import {markdownInputRules} from './rules'
 import {applySettings, type EditorSettings, settings} from './settings'
@@ -269,6 +269,7 @@ export class PitchstoneEditor {
           'Shift-Tab': chainCommands(outdentCommand, () => true),
         }),
         keymap(baseKeymap),
+        androidEnterPlugin(enterCommand),
         history({newGroupDelay: 600}),
         dropCursor(),
         gapCursor(),

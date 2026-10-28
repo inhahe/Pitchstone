@@ -128,7 +128,13 @@ documents pass.
 - **Plugins**: decorations (tags, bare URLs, missing-note links, find matches, placeholder;
   the first three are mapped through each edit and recomputed only for the textblocks it
   touched, so typing costs a block, not the note), structure fix-ups (table header row, task items start with a paragraph), toolbar state
-  reports, link bubble, `[[` note suggestions.
+  reports, link bubble, `[[` note suggestions, and the keyboard's Enter on Android
+  (`androidEnterPlugin`). ProseMirror leaves Enter to the browser there and reads the paragraph
+  break back as an Enter; but Gboard often corrects the word first (a deletion, which
+  ProseMirror reads only 20 ms later, and an insertion), the two are then read together, and
+  the browser's paragraph break stays. The plugin takes the `insertParagraph` input itself:
+  reads what the page holds so far (prosemirror-view's internal `domObserver.forceFlush`), runs
+  `enterCommand`, and cancels the browser's.
 - **Links** (`links.ts`): which notes exist is decided by the app's own rules (see Data): the
   app sends every note's lookup keys, and `noteExists` matches a link's whole name, then its
   `folder/note` path key. A picked suggestion is written as the title's link name (no `#|^[]`),

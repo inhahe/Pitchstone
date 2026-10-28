@@ -545,6 +545,30 @@ test.describe('Enter starts a new line, as in Obsidian', () => {
     await expect(page.locator('.ProseMirror > p')).toHaveText(['one', 'two'])
   })
 
+  test("Enter right after the keyboard changes the word before it still starts a line", async ({page}) => {
+    await open(page, 'b\n')
+    // What Gboard does on Enter after "b", as recorded on an emulator: it replaces the word with
+    // "B" (a deletion, which ProseMirror reads only 20 ms later, and an insertion), then sends
+    // Enter. Each input is the browser's own unless cancelled, as there.
+    await page.evaluate(() => {
+      const editor = document.querySelector('.ProseMirror')!
+      const input = (inputType: string) =>
+        editor.dispatchEvent(new InputEvent('beforeinput', {inputType, bubbles: true, cancelable: true}))
+      const key = (key: string, keyCode: number) =>
+        editor.dispatchEvent(new KeyboardEvent('keydown', {key, keyCode, bubbles: true, cancelable: true} as KeyboardEventInit))
+      key('Unidentified', 229)
+      if (input('deleteContentBackward')) document.execCommand('delete')
+      key('Unidentified', 229)
+      if (input('insertText')) document.execCommand('insertText', false, 'B')
+      key('Enter', 13)
+      if (input('insertParagraph')) document.execCommand('insertParagraph')
+    })
+    // A line break, not the browser's paragraph break, and the cursor after it.
+    await expect(page.locator('.ProseMirror > p')).toHaveCount(1)
+    await page.keyboard.type('c')
+    await expect.poll(() => markdown(page)).toBe('B\nc\n')
+  })
+
   test('Enter in the middle of a line breaks it', async ({page}) => {
     await open(page, 'onetwo\n')
     await caret(page, 'one')

@@ -1,15 +1,44 @@
-// Small plugins: structural fix-ups after edits, and the toolbar state report.
+// Small plugins: structural fix-ups after edits, the toolbar state report, and the keyboard's
+// Enter on Android.
 
 import {redoDepth, undoDepth} from 'prosemirror-history'
 import type {Node} from 'prosemirror-model'
 import {liftListItem, sinkListItem} from 'prosemirror-schema-list'
-import {type EditorState, Plugin} from 'prosemirror-state'
+import {type Command, type EditorState, Plugin} from 'prosemirror-state'
 import {isInTable} from 'prosemirror-tables'
 import {schema} from '../schema'
 import {post, type ToolbarState} from './bridge'
 import {findAncestor} from './commands'
 
 const {nodes, marks} = schema
+
+/** Android, as prosemirror-view tells it (its `android`, which it does not export). */
+const ANDROID = typeof navigator !== 'undefined' && /Android \d/.test(navigator.userAgent)
+
+/**
+ * The keyboard's Enter on Android. ProseMirror leaves it to the browser there (an
+ * `insertParagraph` input) and reads the paragraph break back from the page as an Enter. But a
+ * keyboard often changes the word before it first (autocorrect, a capital letter), and after a
+ * deletion ProseMirror waits 20 ms before reading the page: then both changes are read at once,
+ * the Enter is not recognised, and the browser's paragraph break stays. So it is taken here:
+ * what the page holds so far is read first, then `enter` runs in place of the browser's.
+ */
+export function androidEnterPlugin(enter: Command): Plugin {
+  return new Plugin({
+    props: {
+      handleDOMEvents: {
+        beforeinput(view, event) {
+          if (!ANDROID || (event as InputEvent).inputType !== 'insertParagraph' || view.composing) return false
+          // Not public: what ProseMirror's own key handling does before running a command.
+          ;(view as unknown as {domObserver: {forceFlush(): void}}).domObserver.forceFlush()
+          if (!enter(view.state, view.dispatch, view)) return false
+          event.preventDefault()
+          return true
+        },
+      },
+    },
+  })
+}
 
 /**
  * Keeps edits within what markdown can express structurally: a table's first row is its
