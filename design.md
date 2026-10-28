@@ -97,14 +97,17 @@ documents pass.
   `settings.markdownShortcuts`. Rules also run on IME `compositionend` (Gboard composes words),
   where the whole match is already in the document. Backspace right after a rule undoes it.
 - **Lines** (`lines.ts`): Enter in a paragraph inserts a line break (one newline: `breaks:
-  true`), as in Obsidian; on an empty line it ends the paragraph there (a blank line), and in a
-  quote an empty last line leaves it. Backspace at the start of a paragraph after another, and
+  true`), as in Obsidian; on an empty line it ends the paragraph there (a blank line), keeping
+  any empty lines below the cursor; on the empty last line of a quote's paragraph it leaves the
+  quote, splitting it if more follows. At the start of a paragraph in a quote or footnote, which
+  hold no empty paragraph, Enter adds a line break rather than a paragraph. Backspace at the start of a paragraph after another, and
   Delete at the end of one, turn the blank line between back into a line break. What acts a line
   at a time first makes the selected lines paragraphs of their own (`onLines`, `splitLines`):
   the toolbar's heading, list, quote and code block, and Enter's fence shortcut; a selection
   that only reaches the start of a line (or of a textblock) leaves that line out
   (`selectionEnd`). The divider goes after the line the selection ends on, splitting off only
-  what follows it (`splitAfterLine`), and on an empty line takes its place; `---` then Enter
+  what follows it (`splitAfterLine`), and on an empty line or empty paragraph takes its place;
+  `---` then Enter
   puts the cursor on a new line under the rule, before the lines that followed. Each block
   input rule is a `blockRule`, matching at the start of a textblock or after a line break
   (U+FFFC in the text rules see); after a break it splits the line off on both sides before

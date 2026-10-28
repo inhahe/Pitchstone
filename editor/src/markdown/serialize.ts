@@ -121,6 +121,8 @@ function normalizeBlock(node: Node, ctx: NormContext): Node {
   return fresh.eq(node) ? node : fresh
 }
 
+export const isBreak = (node: Node | null | undefined): boolean => node?.type === nodes.hard_break
+
 /** How markdown reads a run of line breaks in a paragraph (see readRun). */
 export interface RunReading {
   /** Whether the paragraph ends there: a blank line in the file. */
@@ -156,7 +158,6 @@ const linesCache = new WeakMap<Node, {key: string; out: Node[]}>()
  */
 function paragraphsOfLines(para: Node, ctx: NormContext, spacers: boolean): Node[] {
   const content = normalizeInline(para, ctx)
-  const isBreak = (n: Node) => n.type === nodes.hard_break
   if (!content.some((n, i) => isBreak(n) && (i === 0 || isBreak(content[i - 1])))) {
     const fresh = nodes.paragraph.create(para.attrs, content)
     return [fresh.eq(para) ? para : fresh]
@@ -165,9 +166,12 @@ function paragraphsOfLines(para: Node, ctx: NormContext, spacers: boolean): Node
   const cached = linesCache.get(para)
   if (cached?.key === key) return cached.out
   const out: Node[] = []
-  // Normalized again: a line that now starts a paragraph is checked as one (demoteLineStartHtml).
-  const close = (line: Node[]) =>
-    out.push(nodes.paragraph.create(para.attrs, normalizeInline(nodes.paragraph.create(para.attrs, line), ctx)))
+  // The rest of normalizeInline holds within a line; but a line that now starts a paragraph is
+  // checked as one.
+  const close = (line: Node[]) => {
+    demoteLineStartHtml(line)
+    out.push(nodes.paragraph.create(para.attrs, line))
+  }
   let line: Node[] = []
   let run: Node[] = []
   for (const n of content) {

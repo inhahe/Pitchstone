@@ -215,7 +215,8 @@ export const codeBlockCommand: Command = onLines((state, dispatch) => {
 
 /**
  * A horizontal rule after the line the selection ends on (selectionEnd): in a paragraph at the
- * top level, the lines after it go below the rule, and an empty line there becomes the rule;
+ * top level, the lines after it go below the rule, and an empty line (or empty paragraph)
+ * becomes the rule;
  * elsewhere (a quote, a list) the rule goes after that whole block. At the end of the note, a
  * paragraph follows it for the cursor.
  */
@@ -224,16 +225,19 @@ export const horizontalRuleCommand: Command = (state, dispatch) => {
   if (dispatch) {
     const tr = state.tr
     const top = $end.depth === 1
-    const emptyLine = top ? splitOffEmptyLine(tr, $end.pos) : null
+    const emptyParagraph = top && $end.parent.type === nodes.paragraph && !$end.parent.content.size
+    const emptyLine = !top ? null : emptyParagraph ? $end.before() : splitOffEmptyLine(tr, $end.pos)
+    // The rule replaces at..end: an empty line, or nothing.
     let at: number
+    let end: number
     if (emptyLine !== null) {
-      tr.delete(emptyLine, emptyLine + 2)
       at = emptyLine
+      end = emptyLine + 2
     } else {
-      at = (top ? splitAfterLine(tr, $end.pos) : null) ?? ($end.depth === 0 ? $end.pos : tr.mapping.map($end.after(1)))
+      at = end = (top ? splitAfterLine(tr, $end.pos) : null) ?? ($end.depth === 0 ? $end.pos : tr.mapping.map($end.after(1)))
     }
     const rule = nodes.horizontal_rule.create()
-    tr.insert(at, at === tr.doc.content.size ? [rule, nodes.paragraph.create()] : rule)
+    tr.replaceWith(at, end, end === tr.doc.content.size ? [rule, nodes.paragraph.create()] : rule)
     tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(at + 2, tr.doc.content.size))))
     dispatch(tr.scrollIntoView())
   }

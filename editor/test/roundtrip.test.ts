@@ -117,6 +117,16 @@ describe('markdown round trip', () => {
     expect(item.markdown).toBe('- a\n  \\\n  b\n')
   })
 
+  it('checks a line that starts a paragraph after an empty line as the start of one', () => {
+    // Alone on a line, `<span>` continues a paragraph, but would start an HTML block.
+    const span = schema.nodes.html_inline.create({raw: '<span>'})
+    const d = doc.create(null, [p(s('x'), hard_break.create(), hard_break.create(), span)])
+    const r = serializeMarkdown(d)
+    expect(r.exact).toBe(true)
+    expect(parseMarkdown(r.markdown).eq(r.doc)).toBe(true)
+    expect(r.doc.child(1).firstChild?.isText).toBe(true)
+  })
+
   it('splits a paragraph at its empty lines into the same nodes each save, so their renderings stay cached', () => {
     const d = doc.create(null, [p(s('one'), hard_break.create(), hard_break.create(), s('two'))])
     const first = normalizeDoc(d)

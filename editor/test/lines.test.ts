@@ -85,6 +85,11 @@ describe('lines split off as the file reads them', () => {
     expect(markdown(run(horizontalRuleCommand, state(gap, at(gap, 'tw'))))).toBe('two\n\n---\n\nthree\n')
   })
 
+  it('a divider in an empty paragraph takes its place', () => {
+    const doc = docType.create(null, [p(text('a')), p()])
+    expect(markdown(run(horizontalRuleCommand, state(doc, doc.content.size - 1)))).toBe('a\n\n---\n')
+  })
+
   it('a divider on an empty line takes its place', () => {
     const doc = docType.create(null, [p(text('a'), br(), br(), br(), text('b'))])
     let s = run(horizontalRuleCommand, state(doc, at(doc, 'a') + 2))
@@ -154,6 +159,47 @@ describe('Enter', () => {
   it('over list items starts a new item, as in a list', () => {
     const doc = parseMarkdown('- milk\n- eggs\n')
     expect(markdown(run(enterCommand, state(doc, at(doc, 'mi'), at(doc, 'eg'))))).toBe('- mi\n- gs\n')
+  })
+
+  it('puts the cursor one line down, past empty lines above it', () => {
+    // At the top level the empty lines are spacers: the cursor goes in the one below its line's.
+    const doc = docType.create(null, [p(text('one'), br(), br(), br(), text('two'))])
+    let s = run(enterCommand, state(doc, at(doc, 'one') + 2))
+    expect(markdown(s)).toBe('one\n\n\n\ntwo\n')
+    expect(s.selection.$from.index(0)).toBe(2)
+    // Empty lines a paragraph starts with, too.
+    const leading = docType.create(null, [p(br(), br(), text('two'))])
+    s = run(enterCommand, state(leading, 2))
+    expect(markdown(s)).toBe('\n\n\ntwo\n')
+    expect(s.selection.$from.index(0)).toBe(2)
+    // In a quote they stay line breaks.
+    const quoted = docType.create(null, [blockquote.create(null, [p(text('a'), br(), br(), br(), text('b'))])])
+    s = run(enterCommand, state(quoted, at(quoted, 'a') + 2))
+    expect(markdown(s)).toBe('> a\n>\n> \\\n> \\\n> b\n')
+    expect(s.selection.$from.parentOffset).toBe(1)
+  })
+
+  it('on an empty line ending a paragraph keeps the empty lines below it', () => {
+    const doc = docType.create(null, [p(text('a'), br(), br(), br()), p(text('z'))])
+    const s = run(enterCommand, state(doc, at(doc, 'a') + 1))
+    expect(s.doc.child(1).childCount).toBe(2)
+    expect(s.selection.$from.index(0)).toBe(1)
+    expect(s.selection.$from.parentOffset).toBe(0)
+  })
+
+  it('on the empty last line of a quote paragraph leaves the quote, also with more after it', () => {
+    const doc = docType.create(null, [blockquote.create(null, [p(text('a'), br()), p(text('b'))])])
+    const s = run(enterCommand, state(doc, at(doc, 'a') + 1))
+    expect(s.doc.childCount).toBe(3)
+    expect(s.selection.$from.depth).toBe(1)
+    expect(markdown(s)).toBe('> a\n\n\n> b\n')
+  })
+
+  it('at the start of a paragraph in a quote adds a line break the file keeps', () => {
+    const doc = docType.create(null, [blockquote.create(null, [p(text('text'))])])
+    const s = run(enterCommand, state(doc, at(doc, 'text', 'before')))
+    expect(markdown(s)).toBe('> \\\n> text\n')
+    expect(s.selection.$from.nodeBefore?.type).toBe(hard_break)
   })
 
   it('on an empty line in a quote keeps the new line, as a line break after the blank line', () => {

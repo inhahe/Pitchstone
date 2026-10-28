@@ -8,20 +8,17 @@
 // by the blank line it puts between the lines it separates, each Enter adds one newline to it,
 // and the editor shows no empty line the file lacks.
 
-import {liftEmptyBlock} from 'prosemirror-commands'
 import {InputRule} from 'prosemirror-inputrules'
 import {type Attrs, Fragment, type Node, type NodeType, type ResolvedPos, Slice} from 'prosemirror-model'
 import {type Command, EditorState, NodeSelection, Selection, TextSelection, type Transaction} from 'prosemirror-state'
-import {canJoin, findWrapping} from 'prosemirror-transform'
-import {atomMarkdown, readRun} from '../markdown/serialize'
+import {canJoin, findWrapping, liftTarget} from 'prosemirror-transform'
+import {atomMarkdown, isBreak, readRun} from '../markdown/serialize'
 import {schema} from '../schema'
 
 const {nodes} = schema
 
 /** U+FFFC: what a line break (a leaf node) is in the text an input rule is matched against. */
 const LEAF = String.fromCharCode(0xfffc)
-
-const isBreak = (node: Node | null | undefined) => node?.type === nodes.hard_break
 
 /**
  * Whether `$pos` is in a paragraph whose lines may become paragraphs of their own: not one that
@@ -338,7 +335,7 @@ export function enterReplacing(enter: Command): Command {
     else if (sel instanceof TextSelection && !sel.$from.sameParent(sel.$to)) tr = state.tr.deleteSelection()
     if (!tr) return enter(state, dispatch, view)
     let inner: Transaction | null = null
-    if (!enter(stateAfter(state, tr), (t) => (inner = t))) return false
+    if (!enter(stateAfter(state, tr), dispatch && ((t) => (inner = t)))) return false
     if (dispatch && inner) dispatch(append(tr, inner).scrollIntoView())
     return true
   }
@@ -347,8 +344,9 @@ export function enterReplacing(enter: Command): Command {
 /**
  * Enter in a paragraph starts a new line in it (a line break: one newline in the markdown), as
  * in Obsidian. On an empty line it ends the paragraph there (a blank line in the markdown), and
- * an empty last line of a quote leaves the quote. An empty paragraph, or the start of one, is
- * left to the usual Enter: a new paragraph (another blank line).
+ * on the last line of a quote's paragraph it leaves the quote. An empty paragraph, or the start
+ * of a top-level one, is left to the usual Enter: a new paragraph (another blank line). In a
+ * quote or a footnote, which hold no empty paragraph, the start of one gets a line break.
  */
 export const enterNewLine: Command = (state, dispatch) => {
   const sel = state.selection
@@ -356,7 +354,8 @@ export const enterNewLine: Command = (state, dispatch) => {
   const {$from, $to} = sel
   const para = $from.parent
   if (para.type !== nodes.paragraph || !$from.sameParent($to)) return false
-  if (para.content.size === 0 || (sel.empty && $from.parentOffset === 0)) return false
+  const contained = $from.depth > 1 && splittable($from)
+  if (para.content.size === 0 || (sel.empty && $from.parentOffset === 0 && !contained)) return false
   const onEmptyLine = sel.empty && isBreak($from.nodeBefore) && (!$from.nodeAfter || isBreak($from.nodeAfter))
   if (!onEmptyLine || !splittable($from)) {
     if (dispatch) dispatch(state.tr.replaceSelectionWith(nodes.hard_break.create()).scrollIntoView())
@@ -367,12 +366,13 @@ export const enterNewLine: Command = (state, dispatch) => {
     const from = runStart(state.doc, pos)
     const to = runEnd(state.doc, pos)
     const tr = state.tr
+    const last = to === $from.end()
     let cursor: number
-    if (to === $from.end()) {
-      // Empty lines at the end of a paragraph are not written to the file (readRun): only the
-      // cursor's stays, an empty paragraph after it.
-      breaksToParagraphs(tr, from, to, 0)
-      cursor = from + 2
+    if (last) {
+      // Empty lines ending a paragraph are not written to the file (readRun): those above the
+      // cursor's go as the run before a line would, and the cursor's line, with any below it,
+      // starts a paragraph.
+      cursor = splitAtRun(tr, run(tr.doc, from, pos, {lineAfter: true}))
     } else {
       // One more empty line, then the run as markdown reads it, the cursor on the line below
       // its own: a spacer at the top level, else a line break kept after the blank line.
@@ -383,13 +383,12 @@ export const enterNewLine: Command = (state, dispatch) => {
       cursor = r.spacers ? from + 2 + 2 * above : r.leading ? pos + 1 : from + 2 + above
     }
     tr.setSelection(TextSelection.create(tr.doc, cursor))
-    // An empty last line in a quote: out of it, as a second Enter does in Obsidian.
+    // The last line of a quote's paragraph, empty: out of the quote (splitting it, if more
+    // follows), as a second Enter does in Obsidian; the quote could not keep it.
     const $in = tr.doc.resolve(cursor)
-    if (to === $from.end() && $in.depth > 1 && $in.node(-1).type === nodes.blockquote && $in.after() === $in.end(-1)) {
-      let lifted: Transaction | null = null
-      liftEmptyBlock(stateAfter(state, tr), (t) => (lifted = t))
-      if (lifted) append(tr, lifted)
-    }
+    const range = last && !$in.parent.content.size && $in.node(-1).type === nodes.blockquote ? $in.blockRange() : null
+    const target = range && liftTarget(range)
+    if (range && target !== null) tr.lift(range, target)
     dispatch(tr.scrollIntoView())
   }
   return true
