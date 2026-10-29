@@ -90,6 +90,19 @@ export async function command(page: Page, name: string, args?: object) {
   return page.evaluate(([n, a]) => window.pitchstone.command(n, a ? JSON.stringify(a) : undefined), [name, args] as const)
 }
 
+/**
+ * Composes `word` letter by letter, as a soft keyboard does with the word being typed (the
+ * underlined word), and leaves the composition going unless `commit`.
+ */
+export async function compose(page: Page, word: string, commit = false) {
+  const cdp = await page.context().newCDPSession(page)
+  for (let i = 1; i <= word.length; i++) {
+    await cdp.send('Input.imeSetComposition', {text: word.slice(0, i), selectionStart: i, selectionEnd: i})
+  }
+  if (commit) await cdp.send('Input.insertText', {text: word})
+  await cdp.detach()
+}
+
 /** Types text the way a soft keyboard with composition does: each word composed, then committed. */
 export async function typeComposed(page: Page, text: string) {
   const cdp = await page.context().newCDPSession(page)

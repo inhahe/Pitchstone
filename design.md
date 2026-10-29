@@ -171,6 +171,13 @@ The app calls `window.pitchstone.*` with JSON-string arguments (`EditorWebView.c
 change cannot be turned into markdown it stays pending and the result carries `error`),
 `focus`, `scrollToAnchor`, `find`/`findNext`/`findPrevious`.
 
+A `command` pressed while the keyboard is composing the word being typed (the underlined word)
+first ends that composition, by blurring and refocusing the editor (the keyboard stays up).
+Otherwise the keyboard goes on writing the word through the command's change: the marks set
+for what is typed next (bold off, strikethrough on) are dropped at the next key, and a
+reformatted or moved word gets written twice. Ended, the next key starts a new word, and
+ProseMirror types it with the stored marks.
+
 If `load` cannot parse a note, it opens in source mode over an empty stand-in document that is
 never shown or saved: leaving source mode always re-parses, and stays in source mode on failure.
 

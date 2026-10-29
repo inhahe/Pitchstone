@@ -41,6 +41,19 @@ function internals(view: EditorView): ViewInternals | null {
 }
 
 /**
+ * Reads into the editor's state the changes on the page it has not read yet (ProseMirror reads
+ * some later: a deletion on Android 20 ms on, the end of a composition at once after). Returns
+ * false if this prosemirror-view does not have what that takes.
+ */
+export function readPage(view: EditorView): boolean {
+  const pm = internals(view)
+  if (!pm) return false
+  pm.domObserver.forceFlush()
+  pm.domObserver.flush()
+  return true
+}
+
+/**
  * The keyboard's Enter on Android, an `insertParagraph` input, taken from the browser: the
  * changes on the page so far are read first, then Enter goes to the editor's key handlers, as a
  * key press does elsewhere (a suggestion's pick, then the keymap). Left to the browser, its
@@ -54,9 +67,7 @@ export function androidEnterPlugin(): Plugin {
         beforeinput(view, event) {
           if (!ANDROID || event.inputType !== 'insertParagraph' || !event.cancelable || view.composing) return false
           const pm = internals(view)
-          if (!pm) return false
-          pm.domObserver.forceFlush()
-          pm.domObserver.flush()
+          if (!pm || !readPage(view)) return false
           const enter = new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true})
           if (!view.someProp('handleKeyDown', (f) => f(view, enter))) return false
           event.preventDefault()

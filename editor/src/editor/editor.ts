@@ -41,7 +41,7 @@ import {
 } from './commands'
 import {decorationState, decorationsKey, decorationsPlugin} from './decorations'
 import {anchorPosition} from './links'
-import {androidEnterPlugin, structurePlugin, toolbarPlugin} from './plugins'
+import {androidEnterPlugin, readPage, structurePlugin, toolbarPlugin} from './plugins'
 import {backspaceToLineBreak, deleteToLineBreak} from './lines'
 import {markdownInputRules} from './rules'
 import {applySettings, type EditorSettings, settings} from './settings'
@@ -687,9 +687,24 @@ export class PitchstoneEditor {
         cmd = tableCommands[name] ?? null
     }
     if (!cmd) return false
+    this.endComposition()
     const ok = cmd(this.view.state, (tr) => this.view.dispatch(tr), this.view)
     this.view.focus()
     return ok
+  }
+
+  /**
+   * Ends the keyboard's composition of the word being typed (the underlined word), if there is
+   * one. Until it ends, the keyboard goes on writing that word through any change a command
+   * makes: the marks a command sets for what is typed next are dropped at the next key, and
+   * text the command reformats or moves gets written twice. Leaving the editor and coming back
+   * is what makes the browser end it (the keyboard stays up); the word is then read.
+   */
+  private endComposition() {
+    if (!this.view.composing) return
+    this.view.dom.blur()
+    this.view.focus()
+    readPage(this.view)
   }
 }
 

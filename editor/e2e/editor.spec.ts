@@ -1,5 +1,5 @@
 import {expect, type Page, test} from '@playwright/test'
-import {command, FILE_PAGE, flush, markdown, messages, open, PNG, servePictures, typeComposed} from './helpers'
+import {command, compose, FILE_PAGE, flush, markdown, messages, open, PNG, servePictures, typeComposed} from './helpers'
 
 test.describe('markdown shortcuts on', () => {
   const cases: [string, string, string][] = [
@@ -177,6 +177,51 @@ test.describe('markdown shortcuts off', () => {
 })
 
 test.describe('toolbar commands', () => {
+  // A soft keyboard holds the word being typed as a composition (underlined) until a space, and
+  // goes on writing that word, past whatever a command did, unless the composition ends: then
+  // the next key starts a new word, typed with what the command set. So a button pressed in the
+  // middle of a word must end its composition, with the compositionend that tells the keyboard.
+
+  /** Runs `act` while a word is being composed; whether the composition ended meanwhile. */
+  async function compositionEnds(page: Page, act: () => Promise<unknown>): Promise<boolean> {
+    await page.evaluate(() => {
+      const w = window as unknown as {ended: boolean}
+      w.ended = false
+      document.querySelector('.ProseMirror')!.addEventListener('compositionend', () => (w.ended = true), {once: true})
+    })
+    await act()
+    return page.evaluate(() => (window as unknown as {ended: boolean}).ended)
+  }
+
+  test('formatting turned on while a word is being typed applies to what is typed next', async ({page}) => {
+    await open(page)
+    await command(page, 'italic')
+    await compose(page, 'word')
+    expect(await compositionEnds(page, async () => {
+      await command(page, 'italic')
+      await command(page, 'strike')
+    })).toBe(true)
+    await compose(page, 'next', true)
+    expect(await markdown(page)).toBe('*word*~~next~~\n')
+  })
+
+  test('italics turned off while a word is being typed stop', async ({page}) => {
+    await open(page)
+    await command(page, 'italic')
+    await compose(page, 'word')
+    expect(await compositionEnds(page, () => command(page, 'italic'))).toBe(true)
+    await compose(page, 'plain', true)
+    expect(await markdown(page)).toBe('*word*plain\n')
+  })
+
+  test('a command in the middle of a word being typed keeps the word', async ({page}) => {
+    await open(page)
+    await compose(page, 'word')
+    expect(await compositionEnds(page, () => command(page, 'heading', {level: 1}))).toBe(true)
+    await compose(page, 'more', true)
+    expect(await markdown(page)).toBe('# wordmore\n')
+  })
+
   test('heading, lists, quote, code block toggle on and off', async ({page}) => {
     await open(page, 'text\n')
     await command(page, 'heading', {level: 2})
