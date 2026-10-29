@@ -1,0 +1,30 @@
+Categories:
+  - Note
+  - Writing
+License: MIT
+AuthorName: Inhahe
+AuthorWebSite: https://inhahe.com
+SourceCode: https://github.com/inhahe/Pitchstone
+IssueTracker: https://github.com/inhahe/Pitchstone/issues
+Changelog: https://github.com/inhahe/Pitchstone/releases
+
+AutoName: Pitchstone Notes
+
+RepoType: git
+Repo: https://github.com/inhahe/Pitchstone.git
+
+Builds:
+  - versionName: 1.0.2
+    versionCode: 10002
+    commit: v1.0.2
+    subdir: app
+    sudo:
+      - apt-get update
+      - apt-get install -y npm
+    gradle:
+      - yes
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 1.0.2
+CurrentVersionCode: 10002

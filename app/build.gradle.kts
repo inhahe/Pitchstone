@@ -93,6 +93,13 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // F-Droid: no Google-encrypted dependency list in the APK signing block (F-Droid's
+    // scanner rejects it, and it cannot be verified).
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
     signingConfigs {
         if (keystoreProperties.exists()) {
             val p = Properties().apply { keystoreProperties.inputStream().use { load(it) } }
@@ -107,6 +114,8 @@ android {
 
     buildTypes {
         release {
+            // No VCS metadata file in the APK, so F-Droid's build of a tag can match ours.
+            vcsInfo.include = false
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

@@ -1,0 +1,27 @@
+A markdown note-taking app: notes are markdown, linked with [[wikilinks]], tagged with #tags, organised in folders, and easy to get out of the app again as .md or .txt files, or kept in step with a folder (an Obsidian vault, a Syncthing folder) as one markdown file per note.
+
+Writing:
+
+• The editor shows formatting as you write (bold looks bold, a heading looks like a heading) and stores each note as markdown.
+• Formatting toolbar above the keyboard: headings, bold, italic, strikethrough, highlight, code, lists and checklists, links, note links, quotes, code blocks, tables, dividers and footnotes.
+• Markdown shortcuts: type markdown and it formats on the fly. Or turn them off, and what you type stays exactly as typed.
+• Reading view, and a markdown source view for editing the raw text.
+• Links to notes, headings and blocks; following a link to a note that doesn't exist creates it.
+• Find in note, pictures pasted or picked into notes, and other attachments.
+
+Organising:
+
+• Folders, tags, pinned notes, search, multi-select, and a list of the notes that link to the one you're reading.
+
+Safety of your notes:
+
+• Notes save as you type. Version history keeps earlier versions of each note, and deleted notes wait in a trash for 30 days.
+
+Getting notes in and out:
+
+• Export to Markdown or plain text, as files and folders or all in one file.
+• Share notes as text or by email.
+• Import markdown and text files.
+• Sync with a folder: keep the notes in step with a folder on the phone, such as an Obsidian vault or a folder that Syncthing, FolderSync or a cloud app keeps in step with a computer. When a note changed on both sides, the newer text is kept and the other goes to its version history.
+
+No ads, no tracking, no account.

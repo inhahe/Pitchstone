@@ -30,3 +30,20 @@ last release, and refuses a branch other than main, uncommitted changes, a build
 git, a commit GitHub does not have, and a missing `keystore.properties` (an unsigned APK).
 `release.bat --dry-run` does all but publish. Both it and `install-on-phone.bat` build with
 `build-release.bat`. Releasing is the user's call, as pushing is: run it only when asked.
+
+## F-Droid
+
+The app is prepared for F-Droid (not yet submitted):
+
+- **Store listing:** `fastlane/metadata/android/en-US/` (title, short and full description, one
+  changelog per `versionCode`). F-Droid reads it from this repository. When you bump the version,
+  add `changelogs/<versionCode>.txt` (max 500 characters). When the README's features change
+  noticeably, update `full_description.txt` to match (max 4000 characters; plain text).
+- **Build recipe:** `metadata/app.pitchstone.yml` is the draft for F-Droid's fdroiddata
+  repository, written for 1.0.2. Before submitting, point its `Builds` entry and
+  `CurrentVersion` / `CurrentVersionCode` at the first release that carries these changes.
+- **Build settings F-Droid needs**, in `app/build.gradle.kts`: `dependenciesInfo` off (no
+  Google-encrypted dependency block) and `vcsInfo.include = false` for release builds. Keep them.
+- F-Droid builds the release APK unsigned and signs it with its own key, unless the build is
+  made reproducible and the recipe names this app's signing key
+  (https://f-droid.org/docs/Reproducible_Builds/).
