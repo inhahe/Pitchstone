@@ -94,10 +94,9 @@ android {
     }
 
     // F-Droid: no Google-encrypted dependency list in the APK signing block (F-Droid's
-    // scanner rejects it, and it cannot be verified).
+    // scanner rejects it, and it cannot be verified). App bundles keep theirs.
     dependenciesInfo {
         includeInApk = false
-        includeInBundle = false
     }
 
     signingConfigs {
@@ -114,7 +113,8 @@ android {
 
     buildTypes {
         release {
-            // No VCS metadata file in the APK, so F-Droid's build of a tag can match ours.
+            // No VCS metadata file in the APK: it would differ between our build and
+            // F-Droid's, which matters if this app ever ships as a reproducible build.
             vcsInfo.include = false
             isMinifyEnabled = true
             isShrinkResources = true
