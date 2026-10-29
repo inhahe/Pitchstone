@@ -42,6 +42,14 @@ The app is prepared for F-Droid (not yet submitted):
 - **Build recipe:** `metadata/app.pitchstone.yml` is the draft for F-Droid's fdroiddata
   repository, written for 1.0.2. Before submitting, point its `Builds` entry and
   `CurrentVersion` / `CurrentVersionCode` at the first release that carries these changes.
+  It must stay exactly as `fdroid rewritemeta` writes it (no comments, categories sorted),
+  or fdroiddata's CI rejects it; explain things here instead. It installs npm (`sudo`)
+  because the Gradle build compiles the editor with `npm ci` and esbuild.
+- **F-Droid cannot detect new releases by itself yet:** its update checker reads a version
+  code only as a literal number from a file, and the versionCode here is computed from
+  `appVersion` (its `VercodeOperation` only does arithmetic on a number it has read). Until
+  a literal versionCode exists somewhere (for example in `gradle.properties`, with the build
+  checking it matches `appVersion`), F-Droid's maintainers would update the recipe by hand.
 - **Build settings F-Droid needs**, in `app/build.gradle.kts`: `dependenciesInfo` off (no
   Google-encrypted dependency block) and `vcsInfo.include = false` for release builds. Keep them.
 - F-Droid builds the release APK unsigned and signs it with its own key, unless the build is
