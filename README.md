@@ -247,3 +247,7 @@ It runs the tests, builds the signed APK and publishes it as `v<appVersion>`, un
 version is already released; `release.bat --dry-run` does all but publish.
 
 How the app is built is described in `design.md`.
+
+## License
+
+MIT. See `LICENSE`.
