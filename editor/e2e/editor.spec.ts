@@ -182,12 +182,17 @@ test.describe('toolbar commands', () => {
   // the next key starts a new word, typed with what the command set. So a button pressed in the
   // middle of a word must end its composition, with the compositionend that tells the keyboard.
 
-  /** Runs `act` while a word is being composed; whether the composition ended meanwhile. */
+  /**
+   * Runs `act` while a word is being composed; whether the keyboard was told meanwhile that the
+   * word is done: by the composition's end, or by the editor losing focus, which restarts the
+   * keyboard's input (Android does) even where the browser had already dropped the composition.
+   */
   async function compositionEnds(page: Page, act: () => Promise<unknown>): Promise<boolean> {
     await page.evaluate(() => {
       const w = window as unknown as {ended: boolean}
       w.ended = false
-      document.querySelector('.ProseMirror')!.addEventListener('compositionend', () => (w.ended = true), {once: true})
+      const editor = document.querySelector('.ProseMirror')!
+      for (const type of ['compositionend', 'blur']) editor.addEventListener(type, () => (w.ended = true), {once: true})
     })
     await act()
     return page.evaluate(() => (window as unknown as {ended: boolean}).ended)
@@ -212,6 +217,58 @@ test.describe('toolbar commands', () => {
     expect(await compositionEnds(page, () => command(page, 'italic'))).toBe(true)
     await compose(page, 'plain', true)
     expect(await markdown(page)).toBe('*word*plain\n')
+  })
+
+  test('a button pressed after a pause in a word still ends its composition', async ({page}) => {
+    await open(page)
+    await command(page, 'italic')
+    await compose(page, 'word')
+    // ProseMirror forgets a composition after 5 s without input on Android; the keyboard does not.
+    await page.waitForTimeout(5500)
+    expect(await compositionEnds(page, () => command(page, 'italic'))).toBe(true)
+    await compose(page, 'plain', true)
+    expect(await markdown(page)).toBe('*word*plain\n')
+  })
+
+  test('picking a suggestion for the word being typed ends its composition', async ({page}) => {
+    await open(page, '', {titles: ['Alpha project']})
+    await page.keyboard.type('see [[')
+    await compose(page, 'alp')
+    await expect(page.locator('.suggest .item').first()).toHaveText('Alpha project')
+    expect(await compositionEnds(page, () => page.locator('.suggest .item').first().click())).toBe(true)
+    await page.keyboard.type(' ok')
+    expect(await markdown(page)).toBe('see [[Alpha project]] ok\n')
+  })
+
+  test('a button pressed in a word saves nothing at once', async ({page}) => {
+    await open(page, 'some text\n')
+    await compose(page, 'word')
+    await page.evaluate(() => (window.__pitchstoneMessages = []))
+    await command(page, 'bold')
+    // The typing's own save comes 400 ms after its last key; a save leaving the editor makes
+    // (through the worker) would come sooner.
+    await page.waitForTimeout(150)
+    expect((await messages(page)).filter((m) => m.type === 'changed')).toEqual([])
+  })
+
+  test('a button that would do nothing leaves the word being typed alone', async ({page}) => {
+    await open(page)
+    await compose(page, 'word')
+    expect(await compositionEnds(page, () => command(page, 'outdent'))).toBe(false)
+  })
+
+  test('a button pressed just after a keyboard deletion acts where the cursor is', async ({page}) => {
+    await open(page, 'abc\n')
+    await page.evaluate(() => {
+      const editor = document.querySelector('.ProseMirror')!
+      // A keyboard deletion, which ProseMirror reads only 20 ms later on Android...
+      editor.dispatchEvent(new InputEvent('beforeinput', {inputType: 'deleteContentBackward', bubbles: true, cancelable: true}))
+      document.execCommand('delete')
+      // ...and a button pressed before then.
+      window.pitchstone.command('bold')
+    })
+    await page.keyboard.type('x')
+    expect(await markdown(page)).toBe('ab**x**\n')
   })
 
   test('a command in the middle of a word being typed keeps the word', async ({page}) => {

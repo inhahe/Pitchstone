@@ -16,28 +16,36 @@ const {nodes, marks} = schema
 /** Android, as prosemirror-view tells it (its `android`, which it does not export). */
 const ANDROID = typeof navigator !== 'undefined' && /Android \d/.test(navigator.userAgent)
 
-/** What androidEnterPlugin uses of prosemirror-view that is not public. */
-interface ViewInternals {
-  domObserver: {forceFlush(): void; flush(): void}
-  input: {lastKeyCode: number | null; domChangeCount: number}
+// What is used of prosemirror-view that is not public: its reading of the page (readPage), and
+// its record of the last key and of changes on the page (androidEnterPlugin).
+interface DomObserver {
+  forceFlush(): void
+  flush(): void
+}
+interface InputState {
+  lastKeyCode: number | null
+  domChangeCount: number
 }
 
 let internalsMissing = false
 
-/** `view`'s internals, or null (said once on the console) if this prosemirror-view lacks them. */
-function internals(view: EditorView): ViewInternals | null {
-  const v = view as unknown as Partial<ViewInternals>
-  if (
-    typeof v.domObserver?.forceFlush === 'function' &&
-    typeof v.domObserver.flush === 'function' &&
-    typeof v.input?.domChangeCount === 'number' &&
-    'lastKeyCode' in v.input
-  ) {
-    return v as ViewInternals
+/** Null, said once on the console: this prosemirror-view lacks what is used of it. */
+function missing(): null {
+  if (!internalsMissing) {
+    console.error("prosemirror-view internals changed: changes on the page may be read late, and the keyboard's Enter is left to the browser")
   }
-  if (!internalsMissing) console.error("prosemirror-view internals changed: the keyboard's Enter is left to the browser")
   internalsMissing = true
   return null
+}
+
+function domObserver(view: EditorView): DomObserver | null {
+  const o = (view as unknown as {domObserver?: Partial<DomObserver>}).domObserver
+  return typeof o?.forceFlush === 'function' && typeof o.flush === 'function' ? (o as DomObserver) : missing()
+}
+
+function inputState(view: EditorView): InputState | null {
+  const input = (view as unknown as {input?: Partial<InputState>}).input
+  return typeof input?.domChangeCount === 'number' && 'lastKeyCode' in input ? (input as InputState) : missing()
 }
 
 /**
@@ -46,11 +54,39 @@ function internals(view: EditorView): ViewInternals | null {
  * false if this prosemirror-view does not have what that takes.
  */
 export function readPage(view: EditorView): boolean {
-  const pm = internals(view)
-  if (!pm) return false
-  pm.domObserver.forceFlush()
-  pm.domObserver.flush()
+  const observer = domObserver(view)
+  if (!observer) return false
+  observer.forceFlush()
+  observer.flush()
   return true
+}
+
+/** Whether endComposition is leaving the editor and coming back: not a blur or focus to act on. */
+export let endingComposition = false
+
+/**
+ * Ends the keyboard's composition of the word being typed (the underlined word), before
+ * something other than typing changes the text: a command, a picked suggestion. Until it ends,
+ * the keyboard goes on writing that word through such a change: the marks set for what is
+ * typed next (bold off, strikethrough on) are dropped at the next key, and a word replaced or
+ * reformatted gets written again. Ended, the next key starts a new word, typed with the stored
+ * marks. Leaving the editor and coming back is what makes the browser end a composition, with
+ * the event that tells the keyboard (the keyboard stays up). Done whenever the editor has focus:
+ * ProseMirror's own record of a composition ends after 5 s without input on Android, the
+ * keyboard's does not. The page is read before and after, so that the cursor put back is where
+ * the page has it.
+ */
+export function endComposition(view: EditorView): void {
+  if (!view.hasFocus()) return
+  readPage(view)
+  endingComposition = true
+  try {
+    view.dom.blur()
+    readPage(view)
+    view.focus()
+  } finally {
+    endingComposition = false
+  }
 }
 
 /**
@@ -66,15 +102,15 @@ export function androidEnterPlugin(): Plugin {
       handleDOMEvents: {
         beforeinput(view, event) {
           if (!ANDROID || event.inputType !== 'insertParagraph' || !event.cancelable || view.composing) return false
-          const pm = internals(view)
-          if (!pm || !readPage(view)) return false
+          const input = inputState(view)
+          if (!input || !readPage(view)) return false
           const enter = new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true})
           if (!view.someProp('handleKeyDown', (f) => f(view, enter))) return false
           event.preventDefault()
           // What the browser's paragraph break would have told it: the key has been dealt with,
           // and the page has changed (so no fallback Backspace for a deletion just before).
-          pm.input.lastKeyCode = null
-          pm.input.domChangeCount++
+          input.lastKeyCode = null
+          input.domChangeCount++
           return true
         },
       },

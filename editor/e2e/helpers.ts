@@ -1,4 +1,4 @@
-import {expect, type Page} from '@playwright/test'
+import {type CDPSession, expect, type Page} from '@playwright/test'
 import {pathToFileURL} from 'node:url'
 import {existsSync} from 'node:fs'
 import {join} from 'node:path'
@@ -96,11 +96,18 @@ export async function command(page: Page, name: string, args?: object) {
  */
 export async function compose(page: Page, word: string, commit = false) {
   const cdp = await page.context().newCDPSession(page)
-  for (let i = 1; i <= word.length; i++) {
-    await cdp.send('Input.imeSetComposition', {text: word.slice(0, i), selectionStart: i, selectionEnd: i})
-  }
-  if (commit) await cdp.send('Input.insertText', {text: word})
+  await composeWith(cdp, word, commit)
   await cdp.detach()
+}
+
+/** [compose] over an open CDP session. Letters are whole code points (an emoji is one). */
+async function composeWith(cdp: CDPSession, word: string, commit: boolean) {
+  let composing = ''
+  for (const ch of word) {
+    composing += ch
+    await cdp.send('Input.imeSetComposition', {text: composing, selectionStart: composing.length, selectionEnd: composing.length})
+  }
+  if (commit && composing) await cdp.send('Input.insertText', {text: composing})
 }
 
 /** Types text the way a soft keyboard with composition does: each word composed, then committed. */
@@ -112,19 +119,12 @@ export async function typeComposed(page: Page, text: string) {
       await cdp.send('Input.insertText', {text: token})
       continue
     }
-    // Letters are composed one by one, as Gboard does; punctuation is committed directly.
-    let composing = ''
-    for (const ch of token) {
-      if (/[\p{L}\p{N}]/u.test(ch)) {
-        composing += ch
-        await cdp.send('Input.imeSetComposition', {text: composing, selectionStart: composing.length, selectionEnd: composing.length})
-      } else {
-        if (composing) await cdp.send('Input.insertText', {text: composing})
-        composing = ''
-        await cdp.send('Input.insertText', {text: ch})
-      }
+    // Letters and digits are composed, as Gboard does; punctuation is committed directly.
+    for (const part of token.split(/([^\p{L}\p{N}])/u)) {
+      if (!part) continue
+      if (/^[\p{L}\p{N}]/u.test(part)) await composeWith(cdp, part, true)
+      else await cdp.send('Input.insertText', {text: part})
     }
-    if (composing) await cdp.send('Input.insertText', {text: composing})
   }
   await cdp.detach()
 }

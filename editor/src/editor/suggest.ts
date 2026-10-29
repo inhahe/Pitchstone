@@ -6,6 +6,7 @@ import type {EditorView} from 'prosemirror-view'
 import {schema} from '../schema'
 import type {Mode} from './bridge'
 import {linkKey, linkName} from './links'
+import {endComposition} from './plugins'
 import {settings} from './settings'
 
 const OPEN = /(?:^|[^\\!])\[\[([^[\]\n|#]*)$/
@@ -136,6 +137,8 @@ class Suggestions {
   }
 
   pick(i: number) {
+    // The word being typed is replaced: the keyboard must stop writing it (endComposition).
+    endComposition(this.view)
     const q = this.query
     if (!q) return
     const item = this.items[i]

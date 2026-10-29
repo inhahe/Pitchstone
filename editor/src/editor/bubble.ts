@@ -7,6 +7,7 @@ import {schema} from '../schema'
 import {type Mode, post} from './bridge'
 import {currentLink, linkRangeAt, removeLinkCommand, unlinkWikilinkCommand} from './commands'
 import {TAG, URL_RE} from './decorations'
+import {endComposition} from './plugins'
 
 type Target =
   | {kind: 'link'; href: string; pos: number}
@@ -119,13 +120,22 @@ class Bubble {
     this.el.append(this.button('Open', () => openTarget(t), 'primary'))
     if (t.kind === 'link') {
       this.el.append(
-        this.button('Edit', () => post({type: 'editLink', ...currentLink(view.state)})),
-        this.button('Unlink', () => removeLinkCommand(view.state, view.dispatch)),
+        this.button('Edit', () => {
+          endComposition(view)
+          post({type: 'editLink', ...currentLink(view.state)})
+        }),
+        this.button('Unlink', () => {
+          endComposition(view)
+          removeLinkCommand(view.state, view.dispatch)
+        }),
       )
     } else if (t.kind === 'wikilink') {
       this.el.append(
         this.button('Edit', () => post({type: 'editWikilink', target: t.target, alias: t.alias})),
-        this.button('Unlink', () => unlinkWikilinkCommand(view.state, view.dispatch)),
+        this.button('Unlink', () => {
+          endComposition(view)
+          unlinkWikilinkCommand(view.state, view.dispatch)
+        }),
       )
     }
   }

@@ -41,7 +41,7 @@ import {
 } from './commands'
 import {decorationState, decorationsKey, decorationsPlugin} from './decorations'
 import {anchorPosition} from './links'
-import {androidEnterPlugin, readPage, structurePlugin, toolbarPlugin} from './plugins'
+import {androidEnterPlugin, endComposition, endingComposition, structurePlugin, toolbarPlugin} from './plugins'
 import {backspaceToLineBreak, deleteToLineBreak} from './lines'
 import {markdownInputRules} from './rules'
 import {applySettings, type EditorSettings, settings} from './settings'
@@ -196,10 +196,11 @@ export class PitchstoneEditor {
           return false
         },
         focus: (view) => {
-          view.dispatch(view.state.tr.setMeta('focus', true))
+          if (!endingComposition) view.dispatch(view.state.tr.setMeta('focus', true))
           return false
         },
         blur: (view) => {
+          if (endingComposition) return false
           view.dispatch(view.state.tr.setMeta('focus', false))
           this.emitChange()
           return false
@@ -607,7 +608,6 @@ export class PitchstoneEditor {
     if (name === 'undo' && this.mode === 'source') return document.execCommand('undo')
     if (name === 'redo' && this.mode === 'source') return document.execCommand('redo')
     if (this.mode !== 'edit') return false
-    const state = this.view.state
     let cmd: Command | null = null
     switch (name) {
       case 'undo':
@@ -666,7 +666,8 @@ export class PitchstoneEditor {
         break
       case 'link':
         // The app shows its link dialog and answers with setLink.
-        post({type: 'editLink', ...currentLink(state)})
+        endComposition(this.view)
+        post({type: 'editLink', ...currentLink(this.view.state)})
         return true
       case 'setLink':
         cmd = setLinkCommand({text: String(args.text ?? ''), href: String(args.href ?? ''), title: (args.title as string) ?? null})
@@ -686,25 +687,12 @@ export class PitchstoneEditor {
       default:
         cmd = tableCommands[name] ?? null
     }
-    if (!cmd) return false
-    this.endComposition()
+    // One that would do nothing leaves the word being typed alone.
+    if (!cmd || !cmd(this.view.state)) return false
+    endComposition(this.view)
     const ok = cmd(this.view.state, (tr) => this.view.dispatch(tr), this.view)
     this.view.focus()
     return ok
-  }
-
-  /**
-   * Ends the keyboard's composition of the word being typed (the underlined word), if there is
-   * one. Until it ends, the keyboard goes on writing that word through any change a command
-   * makes: the marks a command sets for what is typed next are dropped at the next key, and
-   * text the command reformats or moves gets written twice. Leaving the editor and coming back
-   * is what makes the browser end it (the keyboard stays up); the word is then read.
-   */
-  private endComposition() {
-    if (!this.view.composing) return
-    this.view.dom.blur()
-    this.view.focus()
-    readPage(this.view)
   }
 }
 
