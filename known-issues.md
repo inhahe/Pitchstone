@@ -41,6 +41,20 @@
 - **Tables**: cells hold one line of text (as in GitHub markdown); merged cells pasted from
   elsewhere are split when saved.
 
+## To fix
+
+- **The APK carries none of the license notices of the code it bundles.** ProseMirror and
+  markdown-it (MIT), commonmark-java (BSD-2-Clause) and AndroidX/Kotlin (Apache-2.0) are in
+  every APK, but their notices are not: `app/build.gradle.kts` excludes `META-INF/LICENSE*` and
+  `NOTICE*` from packaging, `editor/build.mjs` bundles with `legalComments: 'none'`, and the app
+  has no licenses screen. MIT and BSD ask for the notice to go along with binary copies, and
+  Apache-2.0 for the NOTICE files. Every published APK (GitHub's, and F-Droid's once there) is
+  such a copy. The fix: have esbuild write the legal comments out (`legalComments: 'external'`)
+  into the editor's assets, collect the Gradle dependencies' licenses (the AboutLibraries plugin
+  is free software and works without Google's libraries), and show both under Settings →
+  Open-source licenses. Found by the code review of the F-Droid preparation (2026-10-29); the
+  other apps prepared then have the same gap.
+
 ## Behaviour to know
 
 - **Pictures are not in Google's cloud backup** (they go to a new phone in a device transfer,

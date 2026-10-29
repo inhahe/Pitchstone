@@ -79,6 +79,14 @@ val appVersionCode = appVersion.split('.').map { it.toIntOrNull() }.let { parts 
     require(minor < 100 && patch < 100) { "appVersion '$appVersion': minor and patch must stay below 100" }
     major * 10000 + minor * 100 + patch
 }
+// Also written out in gradle.properties, where F-Droid's update checker can read it: it must be
+// the code derived from appVersion.
+providers.gradleProperty("appVersionCode").orNull.let { written ->
+    require(written?.toIntOrNull() == appVersionCode) {
+        "appVersionCode in gradle.properties must be $appVersionCode for appVersion $appVersion, " +
+            "and is ${written ?: "missing"}"
+    }
+}
 
 android {
     namespace = "app.pitchstone"

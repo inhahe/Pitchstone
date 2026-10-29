@@ -24,4 +24,4 @@ Getting notes in and out:
 • Import markdown and text files.
 • Sync with a folder: keep the notes in step with a folder on the phone, such as an Obsidian vault or a folder that Syncthing, FolderSync or a cloud app keeps in step with a computer. When a note changed on both sides, the newer text is kept and the other goes to its version history.
 
-No ads, no tracking, no account.
+No ads, no tracking, no account. The app uses the internet only to show pictures that notes link to on the web.

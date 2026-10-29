@@ -42,13 +42,30 @@ install).
 **Version and releases.** The version is `appVersion` in `gradle.properties` (major.minor.patch,
 raised as `CLAUDE.md` says); `app/build.gradle.kts` makes it `versionName` and derives
 `versionCode` = major×10000 + minor×100 + patch, so an update always installs over the version
-before. `build-release.bat` builds the signed release APK (signing: `keystore.properties`,
+before. The same code is written out as `appVersionCode` beside it, because F-Droid's update
+checker reads a version code only as a number in a file; the build refuses the two if they
+disagree. `build-release.bat` builds the signed release APK (signing: `keystore.properties`,
 outside git) for `install-on-phone.bat` (adb, over USB) and `release.bat`, which publishes a
 GitHub release `v<appVersion>`: it refuses a version already released or not above the last,
 a tag without a release, a branch other than main, and anything uncommitted, untracked among
 the build inputs, or unpushed; then runs the editor's tests (unit and e2e) and the app's
 (`testDebugUnitTest`), builds, and attaches the APK and R8's mapping file, with notes listing
-the commits since the previous release tag.
+the commits since the previous release tag. It also refuses a version without its F-Droid
+changelog (`fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`, 500 bytes at most).
+
+**F-Droid.** Prepared, not yet submitted. F-Droid builds the app itself from a `v*` tag, with
+the recipe in `metadata/app.pitchstone.yml` (a draft of the one in F-Droid's fdroiddata
+repository, kept exactly as `fdroid rewritemeta` writes it; explanations for F-Droid's
+maintainers go in its `MaintainerNotes`). The recipe installs npm and, before the Gradle build,
+only the editor's runtime dependencies and esbuild (`npm ci --omit=dev`, which is why esbuild is
+in `dependencies`): `BuildEditorTask` then finds `node_modules` current and only bundles, and the
+bundle is byte-identical to one built with the full install. The store listing comes from
+`fastlane/metadata/android/en-US/`: title, descriptions, changelogs, and `images/icon.png`, the
+launcher icon rendered at 512 px, since F-Droid cannot read a vector-only icon from the APK.
+`app/build.gradle.kts` keeps the Google-encrypted dependency block out of the APK
+(`dependenciesInfo`) and the VCS info file out of release builds (`vcsInfo`). F-Droid signs
+with its own key unless the build is made reproducible and the recipe names this app's key, so
+an F-Droid install and a GitHub install cannot update each other.
 
 ## The markdown contract
 

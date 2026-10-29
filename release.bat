@@ -95,6 +95,18 @@ echo Nothing was published.
 exit /b 1
 :new_version
 
+rem F-Droid shows changelogs\<versionCode>.txt as the version's "What's new".
+set "CHANGELOG=fastlane\metadata\android\en-US\changelogs\%CODE%.txt"
+if not exist "%CHANGELOG%" (
+    echo %CHANGELOG% is missing: say what changed in %VERSION% ^(F-Droid shows it^).
+    echo Nothing was published.
+    exit /b 1
+)
+for %%f in ("%CHANGELOG%") do if %%~zf GTR 500 (
+    echo %CHANGELOG% is over the 500 bytes F-Droid allows. Nothing was published.
+    exit /b 1
+)
+
 echo Testing Pitchstone %VERSION%...
 pushd editor
 call npm test

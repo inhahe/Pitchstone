@@ -241,8 +241,10 @@ keyAlias=pitchstone
 keyPassword=…
 ```
 
-To publish a release on GitHub, raise the version (`appVersion` in `gradle.properties`),
-commit and push to main, then run `release.bat` (it needs the GitHub CLI, `gh`, logged in).
+To publish a release on GitHub, raise the version (`appVersion` in `gradle.properties`, and
+`appVersionCode` beside it, which the build checks), write its F-Droid changelog
+(`fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`), commit and push to main, then
+run `release.bat` (it needs the GitHub CLI, `gh`, logged in).
 It runs the tests, builds the signed APK and publishes it as `v<appVersion>`, unless that
 version is already released; `release.bat --dry-run` does all but publish.
 

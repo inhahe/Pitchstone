@@ -23,8 +23,21 @@ Builds:
       - apt-get install -y npm
     gradle:
       - yes
+    prebuild: cd ../editor && npm ci --omit=dev
+
+MaintainerNotes: |-
+  The Gradle build compiles the in-app editor (editor/, TypeScript and ProseMirror)
+  with esbuild, so it needs Node.js and npm (sudo). prebuild installs only the
+  editor's runtime dependencies and esbuild (npm ci --omit=dev): the test tools in its
+  devDependencies are not needed for the APK. The Gradle task then finds node_modules
+  up to date and only bundles.
+
+  The version code is derived from appVersion in app/build.gradle.kts and written out
+  as appVersionCode in gradle.properties (the build checks the two agree), which is
+  what UpdateCheckData reads.
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
+UpdateCheckData: gradle.properties|appVersionCode=(\d+)|.|appVersion=(.+)
 CurrentVersion: 1.0.2
 CurrentVersionCode: 10002

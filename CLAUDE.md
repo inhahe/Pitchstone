@@ -8,7 +8,9 @@
 
 The version is `appVersion` in `gradle.properties`, major.minor.patch. `app/build.gradle.kts`
 makes it the `versionName` and derives `versionCode` from it (major×10000 + minor×100 +
-patch), so minor and patch stay below 100.
+patch), so minor and patch stay below 100. The code is also written out as `appVersionCode`
+beside it, for F-Droid's update checker: raise both together (the build refuses them if they
+disagree, and says which code it expects).
 
 - **Bump it whenever the app is rebuilt to be installed or released** (`install-on-phone.bat`,
   `release.bat`), choosing the part by what actually changed since the last version:
@@ -36,20 +38,22 @@ git, a commit GitHub does not have, and a missing `keystore.properties` (an unsi
 The app is prepared for F-Droid (not yet submitted):
 
 - **Store listing:** `fastlane/metadata/android/en-US/` (title, short and full description, one
-  changelog per `versionCode`). F-Droid reads it from this repository. When you bump the version,
-  add `changelogs/<versionCode>.txt` (max 500 characters). When the README's features change
-  noticeably, update `full_description.txt` to match (max 4000 characters; plain text).
+  changelog per `versionCode`, and `images/icon.png`). F-Droid reads it from this repository.
+  When you bump the version, add `changelogs/<versionCode>.txt` (max 500 bytes; `release.bat`
+  refuses a release without it). When the README's features change noticeably, update
+  `full_description.txt` to match (max 4000 characters; plain text). `images/icon.png` is the
+  launcher icon rendered at 512 px (F-Droid cannot read a vector-only icon from the APK): when
+  the launcher icon changes, re-render it with
+  `python "D:\visual studio projects\F-Droid tools\render_store_icon.py" .`
 - **Build recipe:** `metadata/app.pitchstone.yml` is the draft for F-Droid's fdroiddata
   repository, written for 1.0.2. Before submitting, point its `Builds` entry and
   `CurrentVersion` / `CurrentVersionCode` at the first release that carries these changes.
-  It must stay exactly as `fdroid rewritemeta` writes it (no comments, categories sorted),
-  or fdroiddata's CI rejects it; explain things here instead. It installs npm (`sudo`)
-  because the Gradle build compiles the editor with `npm ci` and esbuild.
-- **F-Droid cannot detect new releases by itself yet:** its update checker reads a version
-  code only as a literal number from a file, and the versionCode here is computed from
-  `appVersion` (its `VercodeOperation` only does arithmetic on a number it has read). Until
-  a literal versionCode exists somewhere (for example in `gradle.properties`, with the build
-  checking it matches `appVersion`), F-Droid's maintainers would update the recipe by hand.
+  It must stay exactly as `fdroid rewritemeta` writes it (no comments), or fdroiddata's CI
+  rejects it: notes for F-Droid's maintainers go in its `MaintainerNotes`. After acceptance
+  fdroiddata's copy is the one that counts (F-Droid's bots update it): delete this draft then.
+- **The editor build on F-Droid** installs only runtime dependencies and esbuild
+  (`npm ci --omit=dev` in the recipe's `prebuild`), so esbuild stays in `dependencies`, and
+  whatever `build.mjs` imports must be there too, not in `devDependencies`.
 - **Build settings F-Droid needs**, in `app/build.gradle.kts`: `dependenciesInfo` off (no
   Google-encrypted dependency block) and `vcsInfo.include = false` for release builds. Keep them.
 - F-Droid builds the release APK unsigned and signs it with its own key, unless the build is
