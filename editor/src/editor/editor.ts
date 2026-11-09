@@ -224,11 +224,20 @@ export class PitchstoneEditor {
       this.fitSource()
       this.markDirty()
     })
-    // Tapping below the text puts the cursor at the end, as in a paper notebook.
-    root.querySelector('#below')?.addEventListener('click', () => {
-      if (this.mode === 'edit') this.focusEditor('end')
-      else if (this.mode === 'source') this.source.focus()
+    // A tap on the page around the text (below it, beside it, in the margins) puts the cursor in
+    // it, as in a paper notebook (tapAround). It must not take the focus from the editor on its
+    // way, which would close the keyboard and open it again.
+    const around = [document.documentElement, document.body, root, root.querySelector('#below')]
+    const isAround = (e: Event) => this.mode !== 'read' && around.includes(e.target as HTMLElement)
+    for (const type of ['pointerdown', 'mousedown'] as const) {
+      document.addEventListener(type, (e) => {
+        if (isAround(e)) e.preventDefault()
+      })
+    }
+    document.addEventListener('click', (e) => {
+      if (isAround(e)) this.tapAround(e)
     })
+    window.addEventListener('resize', () => this.fitSource())
     document.addEventListener('visibilitychange', () => {
       // A hidden page may be frozen at any moment: no waiting for the worker.
       if (document.visibilityState === 'hidden') this.emitChange(true)
@@ -563,6 +572,44 @@ export class PitchstoneEditor {
     const sel = where === 'start' ? Selection.atStart(this.view.state.doc) : Selection.atEnd(this.view.state.doc)
     this.view.dispatch(this.view.state.tr.setSelection(sel).scrollIntoView())
     this.view.focus()
+  }
+
+  /**
+   * A tap at (`e`'s) clientX, clientY on the page around the text: the cursor goes to the nearest
+   * place on that line, or below the text to its end (endForTyping); in source mode, to the end.
+   */
+  private tapAround(e: MouseEvent) {
+    if (this.mode === 'source') {
+      const end = this.source.value.length
+      this.source.focus()
+      this.source.setSelectionRange(end, end)
+      return
+    }
+    endComposition(this.view)
+    const box = this.view.dom.getBoundingClientRect()
+    let tr = this.view.state.tr
+    if (e.clientY >= box.bottom) {
+      tr = this.endForTyping(tr)
+    } else {
+      const left = Math.min(Math.max(e.clientX, box.left + 1), box.right - 1)
+      const at = this.view.posAtCoords({left, top: Math.max(e.clientY, box.top + 1)})
+      tr.setSelection(at ? Selection.near(tr.doc.resolve(at.pos)) : Selection.atStart(tr.doc))
+    }
+    this.view.dispatch(tr.scrollIntoView())
+    this.view.focus()
+  }
+
+  /**
+   * `tr` with the cursor at the end of the text, for a tap below it. A note that ends with a
+   * block one does not type on at its end (a rule, a table, code) gets an empty paragraph after
+   * it: its end would select the rule, which typing replaces, or type into the table or code.
+   */
+  private endForTyping(tr: Transaction): Transaction {
+    const end = Selection.atEnd(tr.doc)
+    const type = end.$head.parent.type
+    if (end instanceof TextSelection && (type === nodes.paragraph || type === nodes.heading)) return tr.setSelection(end)
+    tr.insert(tr.doc.content.size, nodes.paragraph.create())
+    return tr.setSelection(TextSelection.create(tr.doc, tr.doc.content.size - 1))
   }
 
   private fitTitle() {

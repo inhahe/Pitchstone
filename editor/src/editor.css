@@ -33,21 +33,17 @@ body {
   padding: 12px 20px 0;
   box-sizing: border-box;
   margin: 0 auto;
-  /* At least the screen's height, the rest of it below the text being #below's. */
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
 }
 .readable #app {
   max-width: 46em;
 }
 
-/*
- * Tapping the empty area below the text puts the cursor at the end (editor.ts): all of the
- * screen below a short note, and below a long one, room to scroll its last lines up.
- */
+/* Below a long note, room to scroll its last lines up; source mode's textarea has its own. */
 #below {
-  flex: 1 0 45vh;
+  min-height: 45vh;
+}
+body[data-mode='source'] #below {
+  display: none;
 }
 
 #title {

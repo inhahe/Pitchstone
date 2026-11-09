@@ -180,11 +180,17 @@ documents pass.
   so newer APIs must not be used; the e2e tests delete the post-Chrome-90 ones (`structuredClone`,
   `Array.prototype.at`, ...) before the page loads, and CSS `color-mix` has a plain fallback.
 - The page never navigates; anchors are prevented, the app opens links.
-- **Tapping below the text** puts the cursor at the end (`#below`, editor.ts). The page is at
-  least the screen's height (`#app`, a flex column with `min-height: 100vh`), and `#below`
-  takes the rest of it, at least 45vh. This needs `vh` to be the WebView's height:
-  `EditorWebView` sets match-parent layout params on itself, since laid out as wrap-content
-  (which Compose's `AndroidView` gives a view without params) a WebView makes it 0.
+- **A tap on the page around the text** (below it, beside it, in the margins: the page's own
+  elements, not the title, the text, the source or a popup) puts the cursor in it
+  (`tapAround`): on the nearest place on that line, or below the text at its end. A note
+  ending with a rule, a table or code gets an empty paragraph after it there (`endForTyping`),
+  rather than the rule selected or the cursor inside. In source mode, the cursor goes to the
+  end. The tap does not take the focus from the editor on its way (its pointerdown and
+  mousedown are cancelled), and it ends a composition first (`endComposition`). Below a long
+  note, `#below` (45vh) leaves room to scroll its last lines up. `vh` must be the WebView's
+  height for that: `EditorWebView` sets match-parent layout params on itself, since laid out
+  as wrap-content (which Compose's `AndroidView` gives a view without params) a WebView makes
+  `vh` 0.
 
 ### Bridge (app <-> page)
 

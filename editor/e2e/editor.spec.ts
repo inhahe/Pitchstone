@@ -468,21 +468,84 @@ test.describe('saving', () => {
 })
 
 test.describe('modes', () => {
+  const blur = (page: Page) => page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+
   test('tapping anywhere below the text of a short note puts the cursor at its end', async ({page}) => {
     await open(page, 'one line\n')
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await blur(page)
     // Near the bottom of the screen, far below the line.
-    const height = page.viewportSize()!.height
-    await page.mouse.click(200, height - 40)
+    await page.mouse.click(200, page.viewportSize()!.height - 40)
     await expect(page.locator('.ProseMirror')).toBeFocused()
     await page.keyboard.type(' more')
     expect(await markdown(page)).toBe('one line more\n')
   })
 
-  test('in reading view, tapping below the text leaves the note as it is', async ({page}) => {
-    await open(page, 'one line\n', {mode: 'read'})
+  test('tapping below a note that ends with a rule or code types on a new line after it', async ({page}) => {
+    for (const [note, typed] of [
+      ['text\n\n---\n', 'text\n\n---\n\nx\n'],
+      ['text\n\n```\ncode\n```\n', 'text\n\n```\ncode\n```\n\nx\n'],
+    ]) {
+      await open(page, note)
+      await blur(page)
+      await page.mouse.click(200, page.viewportSize()!.height - 40)
+      await page.keyboard.type('x')
+      expect(await markdown(page), note).toBe(typed)
+    }
+  })
+
+  test('tapping in the margin beside a line puts the cursor on that line', async ({page}) => {
+    await open(page, 'one\n\ntwo\n\nthree\n')
+    await blur(page)
+    const two = await page.locator('.ProseMirror p').nth(1).boundingBox()
+    await page.mouse.click(page.viewportSize()!.width - 4, two!.y + two!.height / 2)
+    await page.keyboard.type('X')
+    expect(await markdown(page)).toBe('one\n\ntwoX\n\nthree\n')
+  })
+
+  test('tapping below the text while typing does not leave the editor (no save at once)', async ({page}) => {
+    await open(page, 'one line\n')
+    await page.keyboard.type(' more')
+    await page.evaluate(() => (window.__pitchstoneMessages = []))
     await page.mouse.click(200, page.viewportSize()!.height - 40)
-    await expect(page.locator('.ProseMirror')).not.toBeFocused()
+    // The typing's own save comes 400 ms after its last key; leaving the editor would save sooner.
+    await page.waitForTimeout(150)
+    expect((await messages(page)).filter((m) => m.type === 'changed')).toEqual([])
+    await expect(page.locator('.ProseMirror')).toBeFocused()
+  })
+
+  test('in source mode, tapping below the text puts the cursor at the end of it', async ({page}) => {
+    await open(page, 'one line\n')
+    await page.evaluate(() => window.pitchstone.setMode('source'))
+    await page.locator('#source').evaluate((s: HTMLTextAreaElement) => {
+      s.focus()
+      s.setSelectionRange(0, 0)
+      s.blur()
+    })
+    await page.mouse.click(200, page.viewportSize()!.height - 10)
+    await page.keyboard.type('X')
+    await expect(page.locator('#source')).toHaveValue('one line\nX')
+  })
+
+  test('below a long note there is room to scroll its last lines up', async ({page}) => {
+    await open(page, Array.from({length: 60}, (_, i) => `line ${i}`).join('\n\n') + '\n')
+    const below = await page.locator('#below').boundingBox()
+    expect(below!.height).toBeGreaterThanOrEqual(page.viewportSize()!.height * 0.45 - 1)
+  })
+
+  test("the space under the title is the larger of its margin and the first block's", async ({page}) => {
+    for (const note of ['text\n', '# Heading\n', '> quote\n', '```\ncode\n```\n']) {
+      await open(page, note)
+      const [gap, expected] = await page.evaluate(() => {
+        const title = document.querySelector('#title')!
+        const first = document.querySelector('.ProseMirror')!.firstElementChild!
+        const margin = (e: Element, side: 'marginTop' | 'marginBottom') => parseFloat(getComputedStyle(e)[side])
+        return [
+          first.getBoundingClientRect().top - title.getBoundingClientRect().bottom,
+          Math.max(margin(title, 'marginBottom'), margin(first, 'marginTop')),
+        ]
+      })
+      expect(Math.abs(gap - expected), `${note}: ${gap} vs ${expected}`).toBeLessThan(1)
+    }
   })
 
   test('source mode edits raw markdown', async ({page}) => {
