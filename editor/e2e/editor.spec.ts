@@ -1,6 +1,22 @@
 import {expect, type Page, test} from '@playwright/test'
 import {command, compose, FILE_PAGE, flush, markdown, messages, open, PNG, servePictures, typeComposed} from './helpers'
 
+/**
+ * Runs `act` while a word is being composed; whether the keyboard was told meanwhile that the
+ * word is done: by the composition's end, or by the editor losing focus, which restarts the
+ * keyboard's input (Android does) even where the browser had already dropped the composition.
+ */
+async function compositionEnds(page: Page, act: () => Promise<unknown>): Promise<boolean> {
+  await page.evaluate(() => {
+    const w = window as unknown as {ended: boolean}
+    w.ended = false
+    const editor = document.querySelector('.ProseMirror')!
+    for (const type of ['compositionend', 'blur']) editor.addEventListener(type, () => (w.ended = true), {once: true})
+  })
+  await act()
+  return page.evaluate(() => (window as unknown as {ended: boolean}).ended)
+}
+
 test.describe('markdown shortcuts on', () => {
   const cases: [string, string, string][] = [
     ['heading', '# Heading', '# Heading\n'],
@@ -181,22 +197,6 @@ test.describe('toolbar commands', () => {
   // goes on writing that word, past whatever a command did, unless the composition ends: then
   // the next key starts a new word, typed with what the command set. So a button pressed in the
   // middle of a word must end its composition, with the compositionend that tells the keyboard.
-
-  /**
-   * Runs `act` while a word is being composed; whether the keyboard was told meanwhile that the
-   * word is done: by the composition's end, or by the editor losing focus, which restarts the
-   * keyboard's input (Android does) even where the browser had already dropped the composition.
-   */
-  async function compositionEnds(page: Page, act: () => Promise<unknown>): Promise<boolean> {
-    await page.evaluate(() => {
-      const w = window as unknown as {ended: boolean}
-      w.ended = false
-      const editor = document.querySelector('.ProseMirror')!
-      for (const type of ['compositionend', 'blur']) editor.addEventListener(type, () => (w.ended = true), {once: true})
-    })
-    await act()
-    return page.evaluate(() => (window as unknown as {ended: boolean}).ended)
-  }
 
   test('formatting turned on while a word is being typed applies to what is typed next', async ({page}) => {
     await open(page)
@@ -502,15 +502,80 @@ test.describe('modes', () => {
     expect(await markdown(page)).toBe('one\n\ntwoX\n\nthree\n')
   })
 
-  test('tapping below the text while typing does not leave the editor (no save at once)', async ({page}) => {
+  test('tapping below the text while typing does not take the focus from the editor first', async ({page}) => {
     await open(page, 'one line\n')
-    await page.keyboard.type(' more')
-    await page.evaluate(() => (window.__pitchstoneMessages = []))
+    await page.evaluate(() => {
+      const w = window as unknown as {events: string[]}
+      w.events = []
+      for (const type of ['pointerdown', 'click']) document.addEventListener(type, () => w.events.push(type), true)
+      document.querySelector('.ProseMirror')!.addEventListener('blur', () => w.events.push('blur'))
+    })
     await page.mouse.click(200, page.viewportSize()!.height - 40)
-    // The typing's own save comes 400 ms after its last key; leaving the editor would save sooner.
-    await page.waitForTimeout(150)
-    expect((await messages(page)).filter((m) => m.type === 'changed')).toEqual([])
+    // A blur before the click would be the browser's, closing the keyboard (and saving at once).
+    const events = await page.evaluate(() => (window as unknown as {events: string[]}).events)
+    expect(events.slice(0, events.indexOf('click')), events.join(' ')).not.toContain('blur')
     await expect(page.locator('.ProseMirror')).toBeFocused()
+  })
+
+  test('tapping below the text while a word is being typed ends its composition', async ({page}) => {
+    await open(page, 'one line\n')
+    await compose(page, 'word')
+    expect(await compositionEnds(page, () => page.mouse.click(200, page.viewportSize()!.height - 40))).toBe(true)
+  })
+
+  test('a drag selecting text that ends beside it keeps the selection', async ({page}) => {
+    await open(page, 'one two three\n')
+    await blur(page)
+    const line = await page.locator('.ProseMirror p').boundingBox()
+    await page.mouse.move(line!.x + 2, line!.y + line!.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(page.viewportSize()!.width - 4, line!.y + line!.height / 2, {steps: 5})
+    await page.mouse.up()
+    expect(await page.evaluate(() => getSelection()!.toString().trim())).not.toBe('')
+  })
+
+  test('tapping below a rule adds no edit: nothing to save, nothing to undo', async ({page}) => {
+    await open(page, 'text\n\n---\n')
+    await flush(page)
+    await blur(page)
+    await page.mouse.click(200, page.viewportSize()!.height - 40)
+    expect((await flush(page)).dirty).toBe(false)
+  })
+
+  test('tapping beside a rule puts the cursor on a line next to it, not on the rule', async ({page}) => {
+    await open(page, 'before\n\n---\n\nafter\n')
+    await blur(page)
+    const rule = await page.locator('.ProseMirror hr').boundingBox()
+    await page.mouse.click(page.viewportSize()!.width - 4, rule!.y + rule!.height / 2)
+    await page.keyboard.type('x')
+    expect(await markdown(page)).toContain('---')
+  })
+
+  test('tapping below a note ending with footnotes types at the end of its text', async ({page}) => {
+    await open(page, 'Body text[^1]\n\n[^1]: a source\n')
+    await blur(page)
+    await page.mouse.click(200, page.viewportSize()!.height - 40)
+    await page.keyboard.type(' more')
+    expect(await markdown(page)).toBe('Body text[^1] more\n\n[^1]: a source\n')
+  })
+
+  test('tapping beside the title puts the cursor at its end', async ({page}) => {
+    await open(page, 'text\n')
+    await page.locator('#title').evaluate((t: HTMLTextAreaElement) => {
+      t.focus()
+      t.setSelectionRange(0, 0)
+    })
+    const title = await page.locator('#title').boundingBox()
+    await page.mouse.click(page.viewportSize()!.width - 4, title!.y + title!.height / 2)
+    await expect(page.locator('#title')).toBeFocused()
+    await page.keyboard.type('X')
+    await expect(page.locator('#title')).toHaveValue('TestX')
+  })
+
+  test('in reading view, a tap below the text changes nothing', async ({page}) => {
+    await open(page, 'text\n\n---\n', {mode: 'read'})
+    await page.mouse.click(200, page.viewportSize()!.height - 40)
+    await expect(page.locator('.ProseMirror > *')).toHaveCount(2)
   })
 
   test('in source mode, tapping below the text puts the cursor at the end of it', async ({page}) => {
@@ -526,10 +591,54 @@ test.describe('modes', () => {
     await expect(page.locator('#source')).toHaveValue('one line\nX')
   })
 
-  test('below a long note there is room to scroll its last lines up', async ({page}) => {
+  test('in source mode, tapping beside the text puts the cursor back where it was', async ({page}) => {
+    await open(page, 'one\n\ntwo\n')
+    await page.evaluate(() => window.pitchstone.setMode('source'))
+    const source = page.locator('#source')
+    await source.evaluate((s: HTMLTextAreaElement) => {
+      s.focus()
+      s.setSelectionRange(2, 2)
+      s.blur()
+    })
+    const box = await source.boundingBox()
+    await page.mouse.click(page.viewportSize()!.width - 4, box!.y + box!.height / 2)
+    await page.keyboard.type('X')
+    await expect(source).toHaveValue('onXe\n\ntwo\n')
+  })
+
+  test('in source mode, tapping below the text while a word is being typed ends its composition', async ({page}) => {
+    await open(page, 'one line\n')
+    await page.evaluate(() => window.pitchstone.setMode('source'))
+    await page.locator('#source').focus()
+    await compose(page, 'word')
+    await page.evaluate(() => {
+      const w = window as unknown as {ended: boolean}
+      w.ended = false
+      document.querySelector('#source')!.addEventListener('compositionend', () => (w.ended = true), {once: true})
+    })
+    await page.mouse.click(200, page.viewportSize()!.height - 10)
+    expect(await page.evaluate(() => (window as unknown as {ended: boolean}).ended)).toBe(true)
+  })
+
+  test('in source mode, the page keeps its scroll position when the screen size changes', async ({page}) => {
+    await open(page, Array.from({length: 80}, (_, i) => `line ${i}`).join('\n\n') + '\n')
+    await page.evaluate(() => window.pitchstone.setMode('source'))
+    // As the keyboard opening or closing does.
+    const scroll = await page.evaluate(() => {
+      window.scrollTo(0, 1500)
+      window.dispatchEvent(new Event('resize'))
+      return Math.round(window.scrollY)
+    })
+    expect(scroll).toBe(1500)
+  })
+
+  test('below a long note there is room to scroll its last lines up, in source mode too', async ({page}) => {
     await open(page, Array.from({length: 60}, (_, i) => `line ${i}`).join('\n\n') + '\n')
-    const below = await page.locator('#below').boundingBox()
-    expect(below!.height).toBeGreaterThanOrEqual(page.viewportSize()!.height * 0.45 - 1)
+    for (const mode of ['edit', 'source'] as const) {
+      await page.evaluate((m) => window.pitchstone.setMode(m), mode)
+      const below = await page.locator('#below').boundingBox()
+      expect(below?.height ?? 0, mode).toBeGreaterThanOrEqual(page.viewportSize()!.height * 0.45 - 1)
+    }
   })
 
   test("the space under the title is the larger of its margin and the first block's", async ({page}) => {

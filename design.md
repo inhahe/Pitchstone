@@ -181,16 +181,21 @@ documents pass.
   `Array.prototype.at`, ...) before the page loads, and CSS `color-mix` has a plain fallback.
 - The page never navigates; anchors are prevented, the app opens links.
 - **A tap on the page around the text** (below it, beside it, in the margins: the page's own
-  elements, not the title, the text, the source or a popup) puts the cursor in it
-  (`tapAround`): on the nearest place on that line, or below the text at its end. A note
-  ending with a rule, a table or code gets an empty paragraph after it there (`endForTyping`),
-  rather than the rule selected or the cursor inside. In source mode, the cursor goes to the
-  end. The tap does not take the focus from the editor on its way (its pointerdown and
-  mousedown are cancelled), and it ends a composition first (`endComposition`). Below a long
-  note, `#below` (45vh) leaves room to scroll its last lines up. `vh` must be the WebView's
-  height for that: `EditorWebView` sets match-parent layout params on itself, since laid out
-  as wrap-content (which Compose's `AndroidView` gives a view without params) a WebView makes
-  `vh` 0.
+  elements, not the title, the text, the source or a popup; not in reading view) puts the
+  cursor in it (`tapAround`). Beside the title it goes to the title's end; beside the text, to
+  the nearest place on that line a cursor can be (beside a rule, a line next to it, the rule
+  never selected); below the text, to its end (`endForTyping`): that of its last paragraph or
+  heading, footnotes not counting, or an empty paragraph after a last rule, table or code
+  block, added as no edit (nothing saved, nothing to undo; a note's trailing empty paragraphs
+  are not written). In source mode, below the text puts the cursor at its end, beside it back
+  where it was. Only a tap that started around the text counts (not a drag selecting text);
+  its pointerdown is cancelled, so it takes the focus from nothing on its way (no keyboard
+  closing and opening), and it ends a composition first (`endComposition`; in source mode, by
+  blurring the textarea). Below a long note, `#below` (45vh, in every mode) leaves room to
+  scroll its last lines up. `vh` must be the WebView's height for that: `EditorWebView` sets
+  match-parent layout params on itself, since laid out as wrap-content (which Compose's
+  `AndroidView` gives a view without params) a WebView makes `vh` 0. The source textarea is
+  refitted on resize, keeping the page's scroll position.
 
 ### Bridge (app <-> page)
 

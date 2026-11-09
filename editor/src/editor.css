@@ -38,12 +38,9 @@ body {
   max-width: 46em;
 }
 
-/* Below a long note, room to scroll its last lines up; source mode's textarea has its own. */
+/* Below a long note, room to scroll its last lines up. */
 #below {
   min-height: 45vh;
-}
-body[data-mode='source'] #below {
-  display: none;
 }
 
 #title {
@@ -74,7 +71,6 @@ body[data-mode='source'] #below {
 #source {
   display: block;
   width: 100%;
-  min-height: 50vh;
   box-sizing: border-box;
   border: none;
   outline: none;

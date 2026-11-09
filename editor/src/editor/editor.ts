@@ -87,6 +87,9 @@ export interface FlushResult {
 
 const SAVE_DELAY_MS = 400
 
+/** Transaction meta: a change to the document that is not the user's edit, and changes nothing written. */
+const NOT_AN_EDIT = 'pitchstone-not-an-edit'
+
 /** The image files in pasted or dropped data. */
 function imageFiles(data: DataTransfer | null): File[] {
   return Array.from(data?.files ?? []).filter((f) => f.type.startsWith('image/'))
@@ -225,17 +228,20 @@ export class PitchstoneEditor {
       this.markDirty()
     })
     // A tap on the page around the text (below it, beside it, in the margins) puts the cursor in
-    // it, as in a paper notebook (tapAround). It must not take the focus from the editor on its
-    // way, which would close the keyboard and open it again.
+    // it, as in a paper notebook (tapAround). It must not take the focus on its way, which would
+    // close the keyboard and open it again: its pointerdown is cancelled, and with it the
+    // mousedown that would. A tap counts only if it started there too: a drag selecting text
+    // that ends beside it is not one.
     const around = [document.documentElement, document.body, root, root.querySelector('#below')]
     const isAround = (e: Event) => this.mode !== 'read' && around.includes(e.target as HTMLElement)
-    for (const type of ['pointerdown', 'mousedown'] as const) {
-      document.addEventListener(type, (e) => {
-        if (isAround(e)) e.preventDefault()
-      })
-    }
+    let downAround = false
+    document.addEventListener('pointerdown', (e) => {
+      downAround = isAround(e)
+      if (downAround) e.preventDefault()
+    })
     document.addEventListener('click', (e) => {
-      if (isAround(e)) this.tapAround(e)
+      if (downAround && isAround(e)) this.tapAround(e)
+      downAround = false
     })
     window.addEventListener('resize', () => this.fitSource())
     document.addEventListener('visibilitychange', () => {
@@ -295,7 +301,7 @@ export class PitchstoneEditor {
   private dispatch(tr: Transaction) {
     const state = this.view.state.apply(tr)
     this.view.updateState(state)
-    if (tr.docChanged) this.markDirty()
+    if (tr.docChanged && !tr.getMeta(NOT_AN_EDIT)) this.markDirty()
   }
 
   private markDirty() {
@@ -575,14 +581,24 @@ export class PitchstoneEditor {
   }
 
   /**
-   * A tap at (`e`'s) clientX, clientY on the page around the text: the cursor goes to the nearest
-   * place on that line, or below the text to its end (endForTyping); in source mode, to the end.
+   * A tap at `e`'s clientX, clientY on the page around the text. Beside the title (or above
+   * it), the cursor goes to the title's end. Beside the text, to the nearest place on that line
+   * a cursor can be; below it, to its end (endForTyping). In source mode, below the text puts the
+   * cursor at its end, beside it back where it was. A composition is ended first (as by
+   * endComposition): the keyboard would otherwise go on writing its word where it was.
    */
   private tapAround(e: MouseEvent) {
+    if (e.clientY <= this.title.getBoundingClientRect().bottom) {
+      const end = this.title.value.length
+      this.title.focus()
+      this.title.setSelectionRange(end, end)
+      return
+    }
     if (this.mode === 'source') {
-      const end = this.source.value.length
+      const end = e.clientY >= this.source.getBoundingClientRect().bottom ? this.source.value.length : null
+      if (document.activeElement === this.source) this.source.blur()
       this.source.focus()
-      this.source.setSelectionRange(end, end)
+      if (end !== null) this.source.setSelectionRange(end, end)
       return
     }
     endComposition(this.view)
@@ -593,23 +609,36 @@ export class PitchstoneEditor {
     } else {
       const left = Math.min(Math.max(e.clientX, box.left + 1), box.right - 1)
       const at = this.view.posAtCoords({left, top: Math.max(e.clientY, box.top + 1)})
-      tr.setSelection(at ? Selection.near(tr.doc.resolve(at.pos)) : Selection.atStart(tr.doc))
+      // Where something else covers the point (a popup), the cursor stays. Beside a rule (or
+      // another block that is one thing), the line next to it: the rule selected, typing would
+      // replace it.
+      const $at = at && tr.doc.resolve(at.pos)
+      const sel = $at && (Selection.findFrom($at, 1, true) ?? Selection.findFrom($at, -1, true))
+      if (sel) tr.setSelection(sel)
     }
     this.view.dispatch(tr.scrollIntoView())
     this.view.focus()
   }
 
   /**
-   * `tr` with the cursor at the end of the text, for a tap below it. A note that ends with a
-   * block one does not type on at its end (a rule, a table, code) gets an empty paragraph after
-   * it: its end would select the rule, which typing replaces, or type into the table or code.
+   * `tr` with the cursor at the end of the text, for a tap below it: at the end of its last
+   * block's text if that is a paragraph or heading, else in an empty paragraph after it (the
+   * end of a rule would select it, typing replacing it; that of a table or code would type into
+   * it). Footnotes, kept at the end of a note, are not the text's end. The paragraph is not an
+   * edit (it saves nothing by itself, and is no step to undo): a note's last empty paragraphs
+   * are not written.
    */
   private endForTyping(tr: Transaction): Transaction {
-    const end = Selection.atEnd(tr.doc)
-    const type = end.$head.parent.type
-    if (end instanceof TextSelection && (type === nodes.paragraph || type === nodes.heading)) return tr.setSelection(end)
-    tr.insert(tr.doc.content.size, nodes.paragraph.create())
-    return tr.setSelection(TextSelection.create(tr.doc, tr.doc.content.size - 1))
+    const doc = tr.doc
+    let i = doc.childCount
+    let end = doc.content.size
+    while (i > 0 && doc.child(i - 1).type === nodes.footnote_def) end -= doc.child(--i).nodeSize
+    const start = i > 0 ? end - doc.child(i - 1).nodeSize : 0
+    const last = Selection.findFrom(doc.resolve(end), -1, true)
+    const type = last?.$head.parent.type
+    if (last && last.head > start && (type === nodes.paragraph || type === nodes.heading)) return tr.setSelection(last)
+    tr.insert(end, nodes.paragraph.create()).setMeta(NOT_AN_EDIT, true).setMeta('addToHistory', false)
+    return tr.setSelection(TextSelection.create(tr.doc, end + 1))
   }
 
   private fitTitle() {
@@ -619,8 +648,12 @@ export class PitchstoneEditor {
 
   private fitSource() {
     if (this.source.hidden) return
+    // Measured with no height of its own, the textarea shortens the page for a moment, and the
+    // browser would keep the scroll position within it.
+    const scroll = window.scrollY
     this.source.style.height = 'auto'
     this.source.style.height = `${this.source.scrollHeight}px`
+    window.scrollTo(window.scrollX, scroll)
   }
 
   // ---- Find in note ---------------------------------------------------------------------
