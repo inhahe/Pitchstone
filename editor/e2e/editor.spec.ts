@@ -468,6 +468,23 @@ test.describe('saving', () => {
 })
 
 test.describe('modes', () => {
+  test('tapping anywhere below the text of a short note puts the cursor at its end', async ({page}) => {
+    await open(page, 'one line\n')
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    // Near the bottom of the screen, far below the line.
+    const height = page.viewportSize()!.height
+    await page.mouse.click(200, height - 40)
+    await expect(page.locator('.ProseMirror')).toBeFocused()
+    await page.keyboard.type(' more')
+    expect(await markdown(page)).toBe('one line more\n')
+  })
+
+  test('in reading view, tapping below the text leaves the note as it is', async ({page}) => {
+    await open(page, 'one line\n', {mode: 'read'})
+    await page.mouse.click(200, page.viewportSize()!.height - 40)
+    await expect(page.locator('.ProseMirror')).not.toBeFocused()
+  })
+
   test('source mode edits raw markdown', async ({page}) => {
     await open(page, '# A\n')
     await page.evaluate(() => window.pitchstone.setMode('source'))

@@ -180,6 +180,11 @@ documents pass.
   so newer APIs must not be used; the e2e tests delete the post-Chrome-90 ones (`structuredClone`,
   `Array.prototype.at`, ...) before the page loads, and CSS `color-mix` has a plain fallback.
 - The page never navigates; anchors are prevented, the app opens links.
+- **Tapping below the text** puts the cursor at the end (`#below`, editor.ts). The page is at
+  least the screen's height (`#app`, a flex column with `min-height: 100vh`), and `#below`
+  takes the rest of it, at least 45vh. This needs `vh` to be the WebView's height:
+  `EditorWebView` sets match-parent layout params on itself, since laid out as wrap-content
+  (which Compose's `AndroidView` gives a view without params) a WebView makes it 0.
 
 ### Bridge (app <-> page)
 

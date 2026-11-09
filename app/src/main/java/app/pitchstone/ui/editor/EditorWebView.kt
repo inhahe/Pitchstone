@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
@@ -85,6 +86,10 @@ class EditorWebView(
         settings.builtInZoomControls = false
         settings.mediaPlaybackRequiresUserGesture = true
         setBackgroundColor(Color.TRANSPARENT)
+        // Laid out as wrap-content (what a host like Compose's AndroidView gives a view without
+        // layout params), a WebView gives the page a viewport 0 high for `vh` units, and the
+        // area the page makes for tapping below the text (editor.css, #below) collapses.
+        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         isVerticalScrollBarEnabled = true
         overScrollMode = OVER_SCROLL_IF_CONTENT_SCROLLS
         webViewClient = object : WebViewClientCompat() {
