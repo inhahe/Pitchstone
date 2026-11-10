@@ -1,0 +1,1 @@
+Tapping anywhere around a note's text puts the cursor there again: below the text (at its end, or on a new line after a final rule, table or code block), beside a line, or beside the title. In a short note most of the screen did nothing.
