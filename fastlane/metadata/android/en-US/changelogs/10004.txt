@@ -1,0 +1,1 @@
+Backspace on an empty bullet now goes back to the end of the one above, instead of bringing the bullet back. On the empty line below a list or a quote, it goes back to the end of it, and a list split in two by Enter, Enter is one list again.
