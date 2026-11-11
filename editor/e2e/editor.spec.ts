@@ -17,6 +17,60 @@ async function compositionEnds(page: Page, act: () => Promise<unknown>): Promise
   return page.evaluate(() => (window as unknown as {ended: boolean}).ended)
 }
 
+/**
+ * Puts the caret right after (or before) the first `text` in the note, as a tap does, and waits
+ * until the editor has taken it up.
+ *
+ * Just after the editor gains focus, ProseMirror puts its own selection back over one the page
+ * sets without a tap or a click: at the start of the document for 200 ms, anywhere until its
+ * focus timer has run. So the caret is placed again until it stays.
+ */
+async function caret(page: Page, text: string, where: 'after' | 'before' = 'after') {
+  for (let attempt = 1; ; attempt++) {
+    const stayed = await page.evaluate(
+      ([t, w]) =>
+        new Promise<boolean>((resolve, reject) => {
+          const editor = document.querySelector('.ProseMirror')!
+          // A point as the text and line breaks before it: the editor may write the same
+          // point another way (in the paragraph rather than its text, say).
+          const place = (node: Node, offset: number) => {
+            const r = document.createRange()
+            r.setStart(editor, 0)
+            r.setEnd(node, offset)
+            return `${r.toString().length}:${r.cloneContents().querySelectorAll('br').length}`
+          }
+          const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+          for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+            const i = n.textContent!.indexOf(t)
+            if (i < 0) continue
+            const offset = w === 'after' ? i + t.length : i
+            const target = place(n, offset)
+            const sel = getSelection()!
+            const there = () => sel.rangeCount > 0 && sel.isCollapsed && place(sel.anchorNode!, sel.anchorOffset) === target
+            // There already: no change to report.
+            if (there()) return resolve(true)
+            // The report of this change, not one still pending from before, and after the
+            // editor's own listener, which was there first.
+            const asked = performance.now()
+            const reported = (e: Event) => {
+              if (e.timeStamp < asked) return
+              document.removeEventListener('selectionchange', reported)
+              setTimeout(() => resolve(there()), 0)
+            }
+            document.addEventListener('selectionchange', reported)
+            setTimeout(() => reject(new Error('the caret move was never reported')), 2000)
+            sel.collapse(n, offset)
+            return
+          }
+          reject(new Error('not in the note: ' + t))
+        }),
+      [text, where] as const,
+    )
+    if (stayed) return
+    if (attempt === 5) throw new Error(`the caret would not stay ${where} ${text}`)
+  }
+}
+
 test.describe('markdown shortcuts on', () => {
   const cases: [string, string, string][] = [
     ['heading', '# Heading', '# Heading\n'],
@@ -374,6 +428,72 @@ test.describe('toolbar commands', () => {
       return (states.at(-1)?.state as {strong: boolean} | undefined)?.strong
     }
     await expect.poll(strong).toBe(true)
+  })
+})
+
+test.describe('Backspace in a list', () => {
+  test('on an empty item after another, it goes back to the end of that one', async ({page}) => {
+    await open(page)
+    await page.keyboard.type('- milk')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.type('s')
+    expect(await markdown(page)).toBe('- milks\n')
+  })
+
+  test('on an empty task after another, the same', async ({page}) => {
+    await open(page)
+    await page.keyboard.type('[ ] milk')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.type('s')
+    expect(await markdown(page)).toBe('- [ ] milks\n')
+  })
+
+  test('on an empty item between two, the list stays one', async ({page}) => {
+    await open(page, '- a\n- c\n')
+    await caret(page, 'a')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.type('x')
+    expect(await markdown(page)).toBe('- ax\n- c\n')
+  })
+
+  test('on an empty nested item, it goes back to the end of the item before', async ({page}) => {
+    await open(page, '- a\n  - b\n')
+    await caret(page, 'b')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.type('x')
+    expect(await markdown(page)).toBe('- a\n  - bx\n')
+  })
+
+  test('on the empty line Enter leaves below a list, it goes back to its last item', async ({page}) => {
+    await open(page)
+    await page.keyboard.type('- milk')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.ProseMirror > p')).toHaveCount(1)
+    await page.keyboard.press('Backspace')
+    await page.keyboard.type('s')
+    expect(await markdown(page)).toBe('- milks\n')
+  })
+
+  test('at the start of a line below a list, it makes it a line of the last item, then joins them', async ({page}) => {
+    await open(page, '- milk\n\neggs\n')
+    await caret(page, 'eggs', 'before')
+    await page.keyboard.press('Backspace')
+    expect(await markdown(page)).toBe('- milk\n  eggs\n')
+    await page.keyboard.press('Backspace')
+    await expect.poll(() => markdown(page)).toBe('- milkeggs\n')
+  })
+
+  test('at the start of the only item, it takes away the bullet', async ({page}) => {
+    await open(page)
+    await page.keyboard.type('- milk')
+    await caret(page, 'milk', 'before')
+    await page.keyboard.press('Backspace')
+    expect(await markdown(page)).toBe('milk\n')
   })
 })
 
@@ -765,60 +885,6 @@ test.describe('pictures stored with notes', () => {
 })
 
 test.describe('Enter starts a new line, as in Obsidian', () => {
-  /**
-   * Puts the caret right after (or before) the first `text` in the note, as a tap does, and waits
-   * until the editor has taken it up.
-   *
-   * Just after the editor gains focus, ProseMirror puts its own selection back over one the page
-   * sets without a tap or a click: at the start of the document for 200 ms, anywhere until its
-   * focus timer has run. So the caret is placed again until it stays.
-   */
-  async function caret(page: Page, text: string, where: 'after' | 'before' = 'after') {
-    for (let attempt = 1; ; attempt++) {
-      const stayed = await page.evaluate(
-        ([t, w]) =>
-          new Promise<boolean>((resolve, reject) => {
-            const editor = document.querySelector('.ProseMirror')!
-            // A point as the text and line breaks before it: the editor may write the same
-            // point another way (in the paragraph rather than its text, say).
-            const place = (node: Node, offset: number) => {
-              const r = document.createRange()
-              r.setStart(editor, 0)
-              r.setEnd(node, offset)
-              return `${r.toString().length}:${r.cloneContents().querySelectorAll('br').length}`
-            }
-            const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
-            for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-              const i = n.textContent!.indexOf(t)
-              if (i < 0) continue
-              const offset = w === 'after' ? i + t.length : i
-              const target = place(n, offset)
-              const sel = getSelection()!
-              const there = () => sel.rangeCount > 0 && sel.isCollapsed && place(sel.anchorNode!, sel.anchorOffset) === target
-              // There already: no change to report.
-              if (there()) return resolve(true)
-              // The report of this change, not one still pending from before, and after the
-              // editor's own listener, which was there first.
-              const asked = performance.now()
-              const reported = (e: Event) => {
-                if (e.timeStamp < asked) return
-                document.removeEventListener('selectionchange', reported)
-                setTimeout(() => resolve(there()), 0)
-              }
-              document.addEventListener('selectionchange', reported)
-              setTimeout(() => reject(new Error('the caret move was never reported')), 2000)
-              sel.collapse(n, offset)
-              return
-            }
-            reject(new Error('not in the note: ' + t))
-          }),
-        [text, where] as const,
-      )
-      if (stayed) return
-      if (attempt === 5) throw new Error(`the caret would not stay ${where} ${text}`)
-    }
-  }
-
   /** The caret's top, in pixels. */
   const caretTop = (page: Page) => page.evaluate(() => getSelection()!.getRangeAt(0).getBoundingClientRect().top)
 

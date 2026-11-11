@@ -14,7 +14,8 @@ and stores each note as markdown.
   Enter on an empty line makes a blank line, which separates paragraphs (and leaves a quote).
   An empty line left between two lines is saved as a blank line too, as Obsidian writes it.
   Backspace at the start of a line after a blank line removes the blank line. In a list, Enter
-  starts the next item; in a table, it moves to the cell below.
+  starts the next item, and Backspace on an empty item takes you back to the end of the one
+  before; in a table, Enter moves to the cell below.
 
 - **Formatting toolbar** above the keyboard: undo/redo, heading level, bold, italic,
   strikethrough, highlight, inline code, bulleted/numbered/check lists, indent/outdent, link,

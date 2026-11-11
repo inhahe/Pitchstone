@@ -433,6 +433,41 @@ export const backspaceToLineBreak: Command = (state, dispatch) => {
 }
 
 /**
+ * Backspace at the start of a paragraph right after a list removes the blank line between them,
+ * as between paragraphs: the paragraph becomes a line of the list's last item (as markdown reads
+ * a line straight after a list), or, empty, goes, the cursor to the end of that item. Without
+ * it, ProseMirror's Backspace would make the paragraph an item of its own, the bullet the
+ * Backspace before had taken away. A last item ending with something other than a paragraph
+ * (code, a heading) takes no line: Backspace is then the usual one.
+ */
+export const backspaceIntoList: Command = (state, dispatch) => {
+  const sel = state.selection
+  if (!(sel instanceof TextSelection) || !sel.empty || sel.$from.parentOffset > 0) return false
+  const $from = sel.$from
+  const para = $from.parent
+  if (para.type !== nodes.paragraph || $from.depth < 1) return false
+  const index = $from.index($from.depth - 1)
+  const list = index > 0 ? $from.node($from.depth - 1).child(index - 1) : null
+  if (!list || (list.type !== nodes.bullet_list && list.type !== nodes.ordered_list)) return false
+  const start = $from.before()
+  // The end of the list's last textblock, the deepest.
+  const end = Selection.findFrom(state.doc.resolve(start), -1, true)
+  if (!end || end.head < start - list.nodeSize) return false
+  if (para.content.size > 0 && end.$head.parent.type !== nodes.paragraph) return false
+  if (dispatch) {
+    const tr = state.tr.delete(start, $from.after())
+    let cursor = end.head
+    if (para.content.size > 0) {
+      tr.insert(end.head, Fragment.from(nodes.hard_break.create()).append(para.content))
+      cursor = end.head + 1
+    }
+    tr.setSelection(TextSelection.create(tr.doc, cursor))
+    dispatch(tr.scrollIntoView())
+  }
+  return true
+}
+
+/**
  * Delete at the end of a paragraph before another: the same, from the other side. On an empty
  * paragraph, Delete removes it, as usual.
  */

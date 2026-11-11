@@ -4,7 +4,7 @@ import {baseKeymap, chainCommands, exitCode, lift, setBlockType, wrapIn} from 'p
 import {redo, undo} from 'prosemirror-history'
 import {Fragment, type Mark, type Node, type NodeType, type ResolvedPos} from 'prosemirror-model'
 import {liftListItem, sinkListItem, splitListItem, wrapInList} from 'prosemirror-schema-list'
-import {type Command, type EditorState, NodeSelection, TextSelection, type Transaction} from 'prosemirror-state'
+import {type Command, type EditorState, NodeSelection, Selection, TextSelection, type Transaction} from 'prosemirror-state'
 import {
   addColumnAfter,
   addRowAfter,
@@ -478,6 +478,8 @@ export const hardBreakCommand: Command = chainCommands(exitCode, (state, dispatc
 /**
  * Backspace at the start of a block undoes its block formatting first: a task item loses its
  * checkbox, then a list item leaves the list, a heading becomes a paragraph, a quote is lifted.
+ * But an empty list item after another goes, and the cursor to the end of that one: Backspace
+ * undoes the Enter that made it.
  */
 export const backspaceAtStart: Command = (state, dispatch) => {
   const sel = state.selection
@@ -488,6 +490,18 @@ export const backspaceAtStart: Command = (state, dispatch) => {
   if (parent.type === nodes.code_block && parent.content.size === 0) return setBlockType(nodes.paragraph)(state, dispatch)
   if ($from.depth >= 2 && $from.index($from.depth - 1) === 0) {
     const container = $from.node($from.depth - 1)
+    const itemDepth = $from.depth - 1
+    const emptyItem = container.type === nodes.list_item && container.childCount === 1 && parent.content.size === 0
+    if (emptyItem && $from.index(itemDepth - 1) > 0) {
+      if (dispatch) {
+        const from = $from.before(itemDepth)
+        const tr = state.tr.delete(from, $from.after(itemDepth))
+        const end = Selection.findFrom(tr.doc.resolve(from), -1, true)
+        if (end) tr.setSelection(end)
+        dispatch(tr.scrollIntoView())
+      }
+      return true
+    }
     if (container.type === nodes.list_item) {
       if (container.attrs.checked !== null) {
         if (dispatch) dispatch(state.tr.setNodeMarkup($from.before($from.depth - 1), null, {...container.attrs, checked: null}))
