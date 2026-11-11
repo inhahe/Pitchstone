@@ -1,8 +1,8 @@
 import {describe, expect, it} from 'vitest'
 import type {Node} from 'prosemirror-model'
 import {type Command, EditorState, NodeSelection, TextSelection} from 'prosemirror-state'
-import {enterCommand, headingCommand, horizontalRuleCommand, listCommand} from '../src/editor/commands'
-import {enterNewLine, textblockHandler} from '../src/editor/lines'
+import {backspaceAtStart, enterCommand, headingCommand, horizontalRuleCommand, listCommand} from '../src/editor/commands'
+import {backspaceIntoBlockBefore, enterNewLine, textblockHandler} from '../src/editor/lines'
 import {enterShortcut} from '../src/editor/rules'
 import {parseMarkdown} from '../src/markdown/parse'
 import {serializeMarkdown} from '../src/markdown/serialize'
@@ -221,5 +221,24 @@ describe('Enter', () => {
     s = run(enterShortcut, state(gap, at(gap, '---')))
     s = s.apply(s.tr.insertText('x'))
     expect(markdown(s)).toBe('a\n\n---\n\nx\n\nbelow\n')
+  })
+})
+
+describe('Backspace in a list', () => {
+  const {bullet_list, list_item, horizontal_rule} = schema.nodes
+  const item = (...content: Node[]) => list_item.create(null, content)
+
+  it('on an empty item after one ending with a rule, takes it out of the list (no place after the rule)', () => {
+    const doc = docType.create(null, [bullet_list.create(null, [item(p(text('a')), horizontal_rule.create()), item(p())])])
+    const s = run(backspaceAtStart, state(doc, doc.content.size - 3))
+    expect(s.doc.childCount).toBe(2)
+    expect(s.doc.child(0).childCount).toBe(1)
+    expect(s.selection.$from.parent.type).toBe(paragraph)
+    expect(s.selection.$from.depth).toBe(1)
+  })
+
+  it('below an item ending with a rule, is the usual Backspace', () => {
+    const doc = docType.create(null, [bullet_list.create(null, [item(p(text('a')), horizontal_rule.create())]), p(text('eggs'))])
+    expect(backspaceIntoBlockBefore(state(doc, at(doc, 'eggs', 'before')))).toBe(false)
   })
 })

@@ -4,7 +4,7 @@ import {baseKeymap, chainCommands, exitCode, lift, setBlockType, wrapIn} from 'p
 import {redo, undo} from 'prosemirror-history'
 import {Fragment, type Mark, type Node, type NodeType, type ResolvedPos} from 'prosemirror-model'
 import {liftListItem, sinkListItem, splitListItem, wrapInList} from 'prosemirror-schema-list'
-import {type Command, type EditorState, NodeSelection, Selection, TextSelection, type Transaction} from 'prosemirror-state'
+import {type Command, type EditorState, NodeSelection, TextSelection, type Transaction} from 'prosemirror-state'
 import {
   addColumnAfter,
   addRowAfter,
@@ -24,6 +24,7 @@ import {
   enterReplacing,
   flattenBreaks,
   isMarkdownAtom,
+  lastTextblockEnd,
   onLines,
   selectionEnd,
   splitAfterLine,
@@ -488,23 +489,26 @@ export const backspaceAtStart: Command = (state, dispatch) => {
   const parent = $from.parent
   if (parent.type === nodes.heading) return setBlockType(nodes.paragraph)(state, dispatch)
   if (parent.type === nodes.code_block && parent.content.size === 0) return setBlockType(nodes.paragraph)(state, dispatch)
-  if ($from.depth >= 2 && $from.index($from.depth - 1) === 0) {
-    const container = $from.node($from.depth - 1)
-    const itemDepth = $from.depth - 1
-    const emptyItem = container.type === nodes.list_item && container.childCount === 1 && parent.content.size === 0
-    if (emptyItem && $from.index(itemDepth - 1) > 0) {
-      if (dispatch) {
-        const from = $from.before(itemDepth)
-        const tr = state.tr.delete(from, $from.after(itemDepth))
-        const end = Selection.findFrom(tr.doc.resolve(from), -1, true)
-        if (end) tr.setSelection(end)
-        dispatch(tr.scrollIntoView())
-      }
-      return true
-    }
+  const depth = $from.depth - 1
+  if (depth >= 1 && $from.index(depth) === 0) {
+    const container = $from.node(depth)
     if (container.type === nodes.list_item) {
+      // An empty item after another: to the end of that one, unless it ends with a rule or raw
+      // HTML (no place for the cursor), when it leaves the list like any other.
+      const index = $from.index(depth - 1)
+      const from = $from.before(depth)
+      const end = index > 0 && container.childCount === 1 && parent.content.size === 0
+        ? lastTextblockEnd($from.node(depth - 1).child(index - 1), from)
+        : null
+      if (end !== null) {
+        if (dispatch) {
+          const tr = state.tr.delete(from, $from.after(depth))
+          dispatch(tr.setSelection(TextSelection.create(tr.doc, end)).scrollIntoView())
+        }
+        return true
+      }
       if (container.attrs.checked !== null) {
-        if (dispatch) dispatch(state.tr.setNodeMarkup($from.before($from.depth - 1), null, {...container.attrs, checked: null}))
+        if (dispatch) dispatch(state.tr.setNodeMarkup(from, null, {...container.attrs, checked: null}))
         return true
       }
       return liftListItem(nodes.list_item)(state, dispatch)

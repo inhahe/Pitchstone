@@ -433,34 +433,59 @@ export const backspaceToLineBreak: Command = (state, dispatch) => {
 }
 
 /**
- * Backspace at the start of a paragraph right after a list removes the blank line between them,
- * as between paragraphs: the paragraph becomes a line of the list's last item (as markdown reads
- * a line straight after a list), or, empty, goes, the cursor to the end of that item. Without
- * it, ProseMirror's Backspace would make the paragraph an item of its own, the bullet the
- * Backspace before had taken away. A last item ending with something other than a paragraph
- * (code, a heading) takes no line: Backspace is then the usual one.
+ * Where `node`, which ends at `after`, ends in a textblock: at the end of its last child's last
+ * child..., the deepest. Null if it ends with something else (a rule, raw HTML), whose end is no
+ * place for a cursor.
  */
-export const backspaceIntoList: Command = (state, dispatch) => {
+export function lastTextblockEnd(node: Node, after: number): number | null {
+  for (;;) {
+    if (node.isTextblock) return after - 1
+    if (node.isLeaf || !node.lastChild) return null
+    node = node.lastChild
+    after--
+  }
+}
+
+/** The blocks that Enter, Enter leaves, and a paragraph after which Backspace goes back into. */
+const leftByEnter = (node: Node) => node.type === nodes.bullet_list || node.type === nodes.ordered_list || node.type === nodes.blockquote
+
+/**
+ * Backspace at the start of a paragraph right after a list or a quote removes the blank line
+ * between them, as between paragraphs: the paragraph becomes a line of the block's last
+ * paragraph (as markdown reads a line straight after a list or a quote), or, empty, goes, the
+ * cursor to the end of the block. If that leaves the block next to another of its kind (Enter,
+ * Enter in the middle of a list splits it), the two are one again. Without this, ProseMirror's
+ * Backspace would put the paragraph back into the block as an item or paragraph of its own: the
+ * bullet the Backspace before had taken away. A block ending with something other than a
+ * paragraph (code, a heading, a rule) takes no line; one ending with a rule or raw HTML, not the
+ * cursor either: Backspace is then the usual one.
+ */
+export const backspaceIntoBlockBefore: Command = (state, dispatch) => {
   const sel = state.selection
   if (!(sel instanceof TextSelection) || !sel.empty || sel.$from.parentOffset > 0) return false
   const $from = sel.$from
   const para = $from.parent
-  if (para.type !== nodes.paragraph || $from.depth < 1) return false
-  const index = $from.index($from.depth - 1)
-  const list = index > 0 ? $from.node($from.depth - 1).child(index - 1) : null
-  if (!list || (list.type !== nodes.bullet_list && list.type !== nodes.ordered_list)) return false
+  if (para.type !== nodes.paragraph) return false
+  const index = $from.index(-1)
+  const block = index > 0 ? $from.node(-1).child(index - 1) : null
+  if (!block || !leftByEnter(block)) return false
   const start = $from.before()
-  // The end of the list's last textblock, the deepest.
-  const end = Selection.findFrom(state.doc.resolve(start), -1, true)
-  if (!end || end.head < start - list.nodeSize) return false
-  if (para.content.size > 0 && end.$head.parent.type !== nodes.paragraph) return false
+  const end = lastTextblockEnd(block, start)
+  if (end === null) return false
+  const target = state.doc.resolve(end).parent
+  if (para.content.size > 0 && target.type !== nodes.paragraph) return false
   if (dispatch) {
     const tr = state.tr.delete(start, $from.after())
-    let cursor = end.head
+    let cursor = end
     if (para.content.size > 0) {
-      tr.insert(end.head, Fragment.from(nodes.hard_break.create()).append(para.content))
-      cursor = end.head + 1
+      // A line after the text there; an empty paragraph there just takes the text.
+      const lineBreak = target.content.size > 0
+      tr.insert(end, lineBreak ? Fragment.from(nodes.hard_break.create()).append(para.content) : para.content)
+      if (lineBreak) cursor++
     }
+    const boundary = tr.mapping.map(start)
+    const next = tr.doc.resolve(boundary).nodeAfter
+    if (next && next.type === block.type && canJoin(tr.doc, boundary)) tr.join(boundary)
     tr.setSelection(TextSelection.create(tr.doc, cursor))
     dispatch(tr.scrollIntoView())
   }

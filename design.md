@@ -129,11 +129,14 @@ documents pass.
   any empty lines below the cursor; on the empty last line of a quote's paragraph it leaves the
   quote, splitting it if more follows. At the start of a paragraph in a quote or footnote, which
   hold no empty paragraph, Enter adds a line break rather than a paragraph. Backspace at the start of a paragraph after another, and
-  Delete at the end of one, turn the blank line between back into a line break; after a list,
-  Backspace makes the paragraph a line of its last item, or, empty, goes to that item's end
-  (`backspaceIntoList`; ProseMirror's own would make it an item again). Backspace on an empty
-  list item after another removes it and goes to that one's end (`backspaceAtStart`), undoing
-  the Enter that made it; at the start of any other item it takes the item out of the list. What acts a line
+  Delete at the end of one, turn the blank line between back into a line break; after a list or a
+  quote, Backspace makes the paragraph a line of the block's last paragraph, or, empty, goes to
+  the block's end, and a list (or quote) split by the paragraph is one again
+  (`backspaceIntoBlockBefore`; ProseMirror's own would make it an item again). Backspace on an
+  empty list item after another removes it and goes to that one's end (`backspaceAtStart`),
+  undoing the Enter that made it; at the start of any other item it takes the item out of the
+  list. Both go to the end of a block's deepest last textblock (`lastTextblockEnd`), and leave
+  one ending with a rule or raw HTML to the usual Backspace. What acts a line
   at a time first makes the selected lines paragraphs of their own (`onLines`, `splitLines`):
   the toolbar's heading, list, quote and code block, and Enter's fence shortcut; a selection
   that only reaches the start of a line (or of a textblock) leaves that line out

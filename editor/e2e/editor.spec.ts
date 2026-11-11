@@ -488,6 +488,55 @@ test.describe('Backspace in a list', () => {
     await expect.poll(() => markdown(page)).toBe('- milkeggs\n')
   })
 
+  test('Enter, Enter, then Backspace in the middle of a list leaves it one list', async ({page}) => {
+    for (const [note, expected] of [
+      ['- a\n- b\n', '- ax\n- b\n'],
+      ['1. a\n2. b\n', '1. ax\n2. b\n'],
+    ]) {
+      await open(page, note)
+      await caret(page, 'a')
+      await page.keyboard.press('Enter')
+      await page.keyboard.press('Enter')
+      await page.keyboard.press('Backspace')
+      await page.keyboard.type('x')
+      expect(await markdown(page), note).toBe(expected)
+    }
+  })
+
+  test('a line between two lists joins the first, and the lists are one again', async ({page}) => {
+    await open(page, '- a\n\neggs\n\n- b\n')
+    await caret(page, 'eggs', 'before')
+    await page.keyboard.press('Backspace')
+    expect(await markdown(page)).toBe('- a\n  eggs\n- b\n')
+  })
+
+  test('a line joining an empty last item fills it, with no empty line before', async ({page}) => {
+    await open(page, '- a\n-\n\neggs\n')
+    await caret(page, 'eggs', 'before')
+    await page.keyboard.press('Backspace')
+    expect(await markdown(page)).toBe('- a\n- eggs\n')
+  })
+
+  test('below an item ending with a rule, a line stays below the rule', async ({page}) => {
+    await open(page, '- a\n\n  ***\n\neggs\n')
+    await caret(page, 'eggs', 'before')
+    await page.keyboard.press('Backspace')
+    const md = await markdown(page)
+    const rule = md.search(/^ *(\*\*\*|---|___) *$/m)
+    expect(rule, md).toBeGreaterThan(0)
+    expect(md.indexOf('eggs'), md).toBeGreaterThan(rule)
+  })
+
+  test('below a quote left with Enter, Enter, it goes back to its end', async ({page}) => {
+    await open(page)
+    await page.keyboard.type('> q')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.type('s')
+    expect(await markdown(page)).toBe('> qs\n')
+  })
+
   test('at the start of the only item, it takes away the bullet', async ({page}) => {
     await open(page)
     await page.keyboard.type('- milk')

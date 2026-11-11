@@ -42,7 +42,7 @@ import {
 import {decorationState, decorationsKey, decorationsPlugin} from './decorations'
 import {anchorPosition} from './links'
 import {androidEnterPlugin, endComposition, endingComposition, structurePlugin, toolbarPlugin} from './plugins'
-import {backspaceIntoList, backspaceToLineBreak, deleteToLineBreak} from './lines'
+import {backspaceIntoBlockBefore, backspaceToLineBreak, deleteToLineBreak} from './lines'
 import {markdownInputRules} from './rules'
 import {applySettings, type EditorSettings, settings} from './settings'
 import {suggestPlugin} from './suggest'
@@ -279,7 +279,7 @@ export class PitchstoneEditor {
           // A new line in a paragraph, as in Obsidian (lines.ts); a list item, a cell below.
           Enter: enterCommand,
           'Shift-Enter': hardBreakCommand,
-          Backspace: chainCommands(undoInputRule, backspaceAtStart, backspaceToLineBreak, backspaceIntoList),
+          Backspace: chainCommands(undoInputRule, backspaceAtStart, backspaceToLineBreak, backspaceIntoBlockBefore),
           Delete: deleteToLineBreak,
           Tab: chainCommands(indentCommand, () => true),
           'Shift-Tab': chainCommands(outdentCommand, () => true),
